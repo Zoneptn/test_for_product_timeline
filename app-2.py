@@ -1208,12 +1208,18 @@ def get_ai_analysis(summary_text: str) -> str:
         "flagging.\n"
         "Be specific and reference the actual categories, gaps, and tiers "
         "given below — don't invent details not present in the summary.\n\n"
+        "Write the analysis TWICE: first in English under a '## English' "
+        "heading, then a natural, fluent Thai translation of the same "
+        "analysis under a '## ภาษาไทย' heading. Use the same agrochemical "
+        "terms (HRAC/IRAC/FRAC, tier names, crop/company/product names) "
+        "untranslated in both versions so they stay easy to cross-check "
+        "against the data.\n\n"
         + summary_text
     )
     try:
         msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=700,
+            max_tokens=1400,
             messages=[{"role": "user", "content": prompt}],
         )
     except Exception as e:
@@ -1296,7 +1302,7 @@ def render_coverage_view():
                 )
                 analysis = get_ai_analysis(summary_text)
             st.markdown("#### AI Analysis")
-            st.write(analysis)
+            st.markdown(analysis)
             with st.expander("Raw summary sent to AI"):
                 st.text(summary_text)
     else:
