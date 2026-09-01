@@ -1246,8 +1246,10 @@ def get_ai_analysis(summary_text: str) -> str:
         "Write it the way you'd actually say it out loud — normal "
         "sentences, not a stat dump with every number in parentheses. "
         "Only mention numbers when they help make the point, not on every "
-        "sentence. Stay strictly factual and only use what's in the tables "
-        "below — don't invent details.\n\n"
+        "sentence. Aim for roughly 300-400 words total — enough to cover "
+        "all four categories properly, but don't pad it out. Stay strictly "
+        "factual and only use what's in the tables below — don't invent "
+        "details.\n\n"
         + summary_text
     )
 
@@ -1255,7 +1257,7 @@ def get_ai_analysis(summary_text: str) -> str:
     try:
         msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=900,
+            max_tokens=1800,
             messages=[{"role": "user", "content": english_prompt}],
             extra_headers=extra_headers,
         )
@@ -1294,7 +1296,7 @@ def get_ai_analysis(summary_text: str) -> str:
     try:
         thai_msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=1800,
+            max_tokens=2600,
             messages=[{"role": "user", "content": translate_prompt}],
             extra_headers=extra_headers,
         )
