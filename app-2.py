@@ -1194,8 +1194,16 @@ def get_ai_analysis(summary_text: str) -> str:
     except ImportError:
         return "⚠️ Run `pip install anthropic` to enable AI analysis."
 
+    # Identity-linked keys that aren't scoped to a single workspace need
+    # the workspace id sent explicitly on every request. Workspace-scoped
+    # keys don't need this — leave workspace_id unset in secrets.toml and
+    # it's simply skipped.
+    workspace_id = st.secrets["anthropic"].get("workspace_id")
+    extra_headers = {"anthropic-workspace-id": workspace_id} if workspace_id else {}
+
     client = anthropic.Anthropic(api_key=api_key)
-    prompt = (
+
+    english_prompt = (
         "You are an agrochemical portfolio analyst. Given this product "
         "coverage summary (one company, one crop, across Weed/Insect/"
         "Disease/Fertilizer), write a concise analysis (6-10 sentences or "
@@ -1208,24 +1216,47 @@ def get_ai_analysis(summary_text: str) -> str:
         "flagging.\n"
         "Be specific and reference the actual categories, gaps, and tiers "
         "given below — don't invent details not present in the summary.\n\n"
-        "Write the analysis TWICE: first in English under a '## English' "
-        "heading, then a natural, fluent Thai translation of the same "
-        "analysis under a '## ภาษาไทย' heading. Use the same agrochemical "
-        "terms (HRAC/IRAC/FRAC, tier names, crop/company/product names) "
-        "untranslated in both versions so they stay easy to cross-check "
-        "against the data.\n\n"
         + summary_text
     )
+
+    # Step 1: English analysis — this is the guaranteed part of the output.
     try:
         msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=1400,
-            messages=[{"role": "user", "content": prompt}],
+            max_tokens=900,
+            messages=[{"role": "user", "content": english_prompt}],
+            extra_headers=extra_headers,
         )
     except Exception as e:
         return f"⚠️ AI analysis failed: {e}"
 
-    return "".join(b.text for b in msg.content if b.type == "text")
+    english_text = "".join(b.text for b in msg.content if b.type == "text")
+
+    # Step 2: Thai translation of that exact English text — best-effort.
+    # If this call fails for any reason, we still return the English
+    # analysis untouched rather than losing it.
+    translate_prompt = (
+        "Translate the following agrochemical portfolio analysis into "
+        "natural, fluent Thai. Keep HRAC/IRAC/FRAC codes, tier names "
+        "(Generic/Medium/Premium), and crop/company/product names "
+        "untranslated so they stay easy to cross-check against the "
+        "original data. Output ONLY the Thai translation, no preamble.\n\n"
+        + english_text
+    )
+    try:
+        thai_msg = client.messages.create(
+            model="claude-sonnet-5",
+            max_tokens=900,
+            messages=[{"role": "user", "content": translate_prompt}],
+            extra_headers=extra_headers,
+        )
+        thai_text = "".join(b.text for b in thai_msg.content if b.type == "text")
+    except Exception:
+        thai_text = None
+
+    if thai_text:
+        return f"## English\n{english_text}\n\n## ภาษาไทย\n{thai_text}"
+    return f"## English\n{english_text}\n\n*(Thai translation unavailable — showing English only.)*"
 
 
 def render_coverage_view():
