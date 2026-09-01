@@ -725,7 +725,13 @@ def _fertilizer_product_html(g: pd.DataFrame, code_col: str, code_label: str) ->
 def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
                       key_cols: list, company: str,
                       code_col: str, code_label: str,
-                      product_html_fn=_default_product_html) -> pd.DataFrame:
+                      product_html_fn=_default_product_html,
+                      track_moa: bool = False) -> pd.DataFrame:
+    """track_moa=True additionally computes, per window, how many DISTINCT
+    resistance codes (HRAC/IRAC/FRAC) the covering products use — a single
+    group across every product covering that window is a resistance-
+    rotation flag. Not meaningful for the fertilizer board (code_col there
+    is "type", not a resistance class), so it defaults off."""
     df = window_df.copy()
 
     if product_df.empty or not company or "company" not in product_df.columns:
@@ -734,6 +740,9 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
         df["product_list_html"] = "—"
         df["other_company_count"] = 0
         df["tier_mix"] = "—"
+        if track_moa:
+            df["moa_mix"] = "—"
+            df["moa_group_count"] = 0
         return df
 
     company_products = product_df[product_df["company"].astype(str) == str(company)]
@@ -741,12 +750,16 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
 
     matched_map = {}
     tier_mix_map = {}
+    moa_mix_map = {}
     if not company_products.empty:
         for keys, g in company_products.groupby(key_cols, dropna=False):
             k = keys if isinstance(keys, tuple) else (keys,)
             matched_map[k] = product_html_fn(g, code_col, code_label)
             tiers_present = {normalize_tier(t) for t in g.get("tier", pd.Series(dtype=object))}
             tier_mix_map[k] = ", ".join(t for t in TIER_ORDER if t in tiers_present) or "—"
+            if track_moa and code_col in g.columns:
+                codes_present = sorted({str(c) for c in g[code_col].dropna().astype(str) if str(c).strip()})
+                moa_mix_map[k] = codes_present
 
     other_count_map = {}
     if not other_products.empty:
@@ -763,6 +776,9 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
     df["product_list_html"] = df["_key"].map(lambda k: matched_map.get(k, "—"))
     df["other_company_count"] = df["_key"].map(lambda k: other_count_map.get(k, 0))
     df["tier_mix"] = df["_key"].map(lambda k: tier_mix_map.get(k, "—"))
+    if track_moa:
+        df["moa_mix"] = df["_key"].map(lambda k: ", ".join(moa_mix_map.get(k, [])) or "—")
+        df["moa_group_count"] = df["_key"].map(lambda k: len(moa_mix_map.get(k, [])))
     df = df.drop(columns=["_key"])
     return df
 
@@ -921,7 +937,9 @@ def weed_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
     product_df = load_product_df(sheets, "weed_her", crop_id)
 
     key_cols = ["ws_id", "weed_id"]
-    df = compute_coverage(window_df, product_df, key_cols, company, "hrac_code", "HRAC")
+    df = compute_coverage(window_df, product_df, key_cols, company, "hrac_code", "HRAC",
+                           track_moa=True)
+    df = df.rename(columns={"moa_mix": "hrac_mix", "moa_group_count": "hrac_group_count"})
 
     name_col = "weed_name_th" if is_thai else "weed_science"
     row_label_map = {
@@ -936,7 +954,9 @@ def weed_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
             f"Day {row['start_day']}–{row['end_day']}<br><br>"
         )
         if row["covered"]:
-            return base + f"<b>{company} products:</b><br>{row['product_list_html']}<extra></extra>"
+            moa_line = f"<br><i>HRAC groups: {row['hrac_mix']} ({row['hrac_group_count']} distinct)</i>" \
+                if row['hrac_group_count'] else ""
+            return base + f"<b>{company} products:</b><br>{row['product_list_html']}{moa_line}<extra></extra>"
         extra = f"<br><i>{row['other_company_count']} other company(ies) cover this</i>" if row['other_company_count'] else ""
         return base + f"<b>{company}: no product</b>{extra}<extra></extra>"
 
@@ -946,7 +966,8 @@ def weed_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     row_label_map=row_label_map, sort_col="type",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["weed_stage", "weed_science", "weed_name_en", "weed_name_th",
-                   "type", "start_day", "end_day", "coverage_status", "tier_mix"]
+                   "type", "start_day", "end_day", "coverage_status", "tier_mix",
+                   "hrac_mix", "hrac_group_count"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
 
 
@@ -962,7 +983,9 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
         window_df["rank"] = pd.to_numeric(window_df["rank"], errors="coerce").fillna(float("inf"))
 
     key_cols = ["pest_id"]
-    df = compute_coverage(window_df, product_df, key_cols, company, "irac_code", "IRAC")
+    df = compute_coverage(window_df, product_df, key_cols, company, "irac_code", "IRAC",
+                           track_moa=True)
+    df = df.rename(columns={"moa_mix": "irac_mix", "moa_group_count": "irac_group_count"})
 
     name_col = "pest_name_th" if is_thai else "pest_name_en"
     row_label_map = {
@@ -979,7 +1002,9 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
             f"Day {row['start_day']}–{row['end_day']}<br><br>"
         )
         if row["covered"]:
-            return base + f"<b>{company} products:</b><br>{row['product_list_html']}<extra></extra>"
+            moa_line = f"<br><i>IRAC groups: {row['irac_mix']} ({row['irac_group_count']} distinct)</i>" \
+                if row['irac_group_count'] else ""
+            return base + f"<b>{company} products:</b><br>{row['product_list_html']}{moa_line}<extra></extra>"
         extra = f"<br><i>{row['other_company_count']} other company(ies) cover this</i>" if row['other_company_count'] else ""
         return base + f"<b>{company}: no product</b>{extra}<extra></extra>"
 
@@ -990,7 +1015,7 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     sort_col="rank" if has_rank else "order",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["pest_name_en", "pest_name_th", "order", "start_day", "end_day",
-                   "coverage_status", "tier_mix"]
+                   "coverage_status", "tier_mix", "irac_mix", "irac_group_count"]
     if has_rank:
         detail_cols.insert(3, "rank")
     return fig, df[detail_cols], df["covered"].sum(), len(df)
@@ -1002,7 +1027,9 @@ def disease_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
     product_df = load_product_df(sheets, "disease_fun", crop_id)
 
     key_cols = ["disease_id"]
-    df = compute_coverage(window_df, product_df, key_cols, company, "frac_code", "FRAC")
+    df = compute_coverage(window_df, product_df, key_cols, company, "frac_code", "FRAC",
+                           track_moa=True)
+    df = df.rename(columns={"moa_mix": "frac_mix", "moa_group_count": "frac_group_count"})
 
     name_col = "disease_name_th" if is_thai else "disease_name_en"
     row_label_map = {
@@ -1017,7 +1044,9 @@ def disease_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
             f"Day {row['start_day']}–{row['end_day']}<br><br>"
         )
         if row["covered"]:
-            return base + f"<b>{company} products:</b><br>{row['product_list_html']}<extra></extra>"
+            moa_line = f"<br><i>FRAC groups: {row['frac_mix']} ({row['frac_group_count']} distinct)</i>" \
+                if row['frac_group_count'] else ""
+            return base + f"<b>{company} products:</b><br>{row['product_list_html']}{moa_line}<extra></extra>"
         extra = f"<br><i>{row['other_company_count']} other company(ies) cover this</i>" if row['other_company_count'] else ""
         return base + f"<b>{company}: no product</b>{extra}<extra></extra>"
 
@@ -1027,17 +1056,18 @@ def disease_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     row_label_map=row_label_map, sort_col="type",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["disease_name_sc", "disease_name_en", "disease_name_th",
-                   "type", "start_day", "end_day", "coverage_status", "tier_mix"]
+                   "type", "start_day", "end_day", "coverage_status", "tier_mix",
+                   "frac_mix", "frac_group_count"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
 
 
-def fertilizer_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
+def _fertilizer_coverage_core(crop_id, sheets, crop_stage_df, stage_label_col,
+                               company, type_choice="All"):
+    """No Streamlit widgets in here — safe to call multiple times in the
+    same run (e.g. once for the visible board, once for the AI summary)
+    without triggering a duplicate-widget error."""
     window_df = sheets["crop_fer"][sheets["crop_fer"]["crop_id"] == crop_id].copy()
     product_df_all = load_product_df(sheets, "fertilizer", crop_id)
-
-    fert_types = sorted(product_df_all["type"].dropna().astype(str).unique().tolist()) \
-        if "type" in product_df_all.columns else []
-    type_choice = st.selectbox("Fertilizer type", ["All"] + fert_types, key="cov_fert_type")
     product_df = product_df_all if (type_choice == "All" or "type" not in product_df_all.columns) else \
         product_df_all[product_df_all["type"].astype(str) == type_choice]
 
@@ -1062,7 +1092,18 @@ def fertilizer_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, compan
                                     row_label_map=row_label_map, sort_col="start_day",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["stage", "start_day", "end_day", "coverage_status", "tier_mix"]
-    return fig, df[detail_cols], df["covered"].sum(), len(df)
+    return fig, df[detail_cols], df["covered"].sum(), len(df), product_df_all
+
+
+def fertilizer_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
+    product_df_all = load_product_df(sheets, "fertilizer", crop_id)
+    fert_types = sorted(product_df_all["type"].dropna().astype(str).unique().tolist()) \
+        if "type" in product_df_all.columns else []
+    type_choice = st.selectbox("Fertilizer type", ["All"] + fert_types, key="cov_fert_type")
+    fig, detail_df, covered_n, total_n, _ = _fertilizer_coverage_core(
+        crop_id, sheets, crop_stage_df, stage_label_col, company, type_choice
+    )
+    return fig, detail_df, covered_n, total_n
 
 
 BOARDS_COV = {
@@ -1071,6 +1112,114 @@ BOARDS_COV = {
     "Disease": disease_board_cov,
     "Fertilizer": fertilizer_board_cov,
 }
+
+
+# =====================================================================
+# AI analysis — summarize coverage across ALL FOUR boards for the
+# selected crop + company and hand it to Claude directly. The combined
+# table is small (a few dozen rows per board at most), so no retrieval
+# step is needed — just build a compact text summary and send it.
+# =====================================================================
+
+def _category_summary(label: str, detail_df: pd.DataFrame, moa_col: str = None,
+                       moa_count_col: str = None, moa_label: str = None) -> str:
+    if detail_df.empty:
+        return f"{label}: no data for this crop."
+
+    total = len(detail_df)
+    covered_df = detail_df[detail_df["coverage_status"] == "Has Product"]
+    gap_df = detail_df[detail_df["coverage_status"] == "No Product"]
+
+    label_col = next(c for c in detail_df.columns if c not in (
+        "start_day", "end_day", "coverage_status", "tier_mix",
+        "type", "order", "rank", moa_col, moa_count_col,
+    ))
+
+    tier_counts = {t: 0 for t in TIER_ORDER}
+    for mix in covered_df["tier_mix"]:
+        for t in str(mix).split(", "):
+            if t in tier_counts:
+                tier_counts[t] += 1
+
+    lines = [
+        f"{label}: {len(covered_df)}/{total} windows covered.",
+        f"  Tier mix on covered windows: "
+        f"{', '.join(f'{t}={n}' for t, n in tier_counts.items() if n) or 'n/a'}",
+        f"  Uncovered windows ({len(gap_df)}): "
+        f"{', '.join(gap_df[label_col].astype(str).tolist()) or 'none'}",
+    ]
+
+    if moa_col and moa_count_col and moa_count_col in covered_df.columns:
+        single_group = covered_df[covered_df[moa_count_col] == 1]
+        if not single_group.empty:
+            lines.append(
+                f"  Single-{moa_label}-group windows (resistance rotation risk): "
+                f"{', '.join(single_group[label_col].astype(str).tolist())}"
+            )
+
+    return "\n".join(lines)
+
+
+def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
+                                 crop_choice: str, company: str) -> str:
+    _, weed_df, _, _ = weed_board_cov(crop_id, sheets, crop_stage_df, label_col, company)
+    _, pest_df, _, _ = pest_board_cov(crop_id, sheets, crop_stage_df, label_col, company)
+    _, disease_df, _, _ = disease_board_cov(crop_id, sheets, crop_stage_df, label_col, company)
+    _, fert_df, _, _, _ = _fertilizer_coverage_core(crop_id, sheets, crop_stage_df, label_col, company)
+
+    parts = [
+        f"Crop: {crop_choice}",
+        f"Company: {company}",
+        "",
+        _category_summary("Weed (herbicide)", weed_df, "hrac_mix", "hrac_group_count", "HRAC"),
+        "",
+        _category_summary("Insect (insecticide)", pest_df, "irac_mix", "irac_group_count", "IRAC"),
+        "",
+        _category_summary("Disease (fungicide)", disease_df, "frac_mix", "frac_group_count", "FRAC"),
+        "",
+        _category_summary("Fertilizer", fert_df),
+    ]
+    return "\n".join(parts)
+
+
+def get_ai_analysis(summary_text: str) -> str:
+    try:
+        api_key = st.secrets["anthropic"]["api_key"]
+    except (KeyError, FileNotFoundError):
+        return ("⚠️ Add an `[anthropic]` section with `api_key = \"...\"` to "
+                "`.streamlit/secrets.toml` to enable AI analysis.")
+
+    try:
+        import anthropic
+    except ImportError:
+        return "⚠️ Run `pip install anthropic` to enable AI analysis."
+
+    client = anthropic.Anthropic(api_key=api_key)
+    prompt = (
+        "You are an agrochemical portfolio analyst. Given this product "
+        "coverage summary (one company, one crop, across Weed/Insect/"
+        "Disease/Fertilizer), write a concise analysis (6-10 sentences or "
+        "short bullets) covering:\n"
+        "1. Overall strengths and the most important gaps, called out by "
+        "category.\n"
+        "2. Whether the covered portfolio leans Generic, Medium, or "
+        "Premium overall, and in which category it differs most.\n"
+        "3. Any single-MoA-group windows (resistance rotation risk) worth "
+        "flagging.\n"
+        "Be specific and reference the actual categories, gaps, and tiers "
+        "given below — don't invent details not present in the summary.\n\n"
+        + summary_text
+    )
+    try:
+        msg = client.messages.create(
+            model="claude-sonnet-5",
+            max_tokens=700,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as e:
+        return f"⚠️ AI analysis failed: {e}"
+
+    return "".join(b.text for b in msg.content if b.type == "text")
 
 
 def render_coverage_view():
@@ -1137,6 +1286,19 @@ def render_coverage_view():
         else:
             with st.expander(f"{board_choice} detail table"):
                 st.dataframe(detail_df, use_container_width=True, hide_index=True)
+
+        st.divider()
+        if st.button("🤖 Analyze full coverage (Weed + Insect + Disease + Fertilizer)",
+                      key="cov_ai_button"):
+            with st.spinner("Analyzing coverage across all boards..."):
+                summary_text = build_full_coverage_summary(
+                    crop_id, sheets, crop_stage_df, label_col, crop_choice, company_choice
+                )
+                analysis = get_ai_analysis(summary_text)
+            st.markdown("#### AI Analysis")
+            st.write(analysis)
+            with st.expander("Raw summary sent to AI"):
+                st.text(summary_text)
     else:
         st.info("Select a company above to see its coverage.")
 
