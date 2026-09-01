@@ -1204,18 +1204,22 @@ def get_ai_analysis(summary_text: str) -> str:
     client = anthropic.Anthropic(api_key=api_key)
 
     english_prompt = (
-        "You are an agrochemical portfolio analyst. Given this product "
-        "coverage summary (one company, one crop, across Weed/Insect/"
-        "Disease/Fertilizer), write a concise analysis (6-10 sentences or "
-        "short bullets) covering:\n"
-        "1. Overall strengths and the most important gaps, called out by "
-        "category.\n"
-        "2. Whether the covered portfolio leans Generic, Medium, or "
-        "Premium overall, and in which category it differs most.\n"
-        "3. Any single-MoA-group windows (resistance rotation risk) worth "
-        "flagging.\n"
-        "Be specific and reference the actual categories, gaps, and tiers "
-        "given below — don't invent details not present in the summary.\n\n"
+        "You're an agronomist colleague talking through a product coverage "
+        "table with a teammate — not writing a formal report. Read the "
+        "summary below (one company, one crop, across Weed/Insect/Disease/"
+        "Fertilizer) and explain in plain, natural prose:\n"
+        "- Where the portfolio is strong and where it's genuinely thin, "
+        "category by category — include all four categories, even briefly.\n"
+        "- Whether it leans Generic, Medium, or Premium overall, and which "
+        "category pulls that either way.\n"
+        "- Any single-MoA-group windows worth flagging as a resistance "
+        "rotation risk.\n"
+        "- End with 2-3 sentences on what to prioritize.\n\n"
+        "Write it the way you'd actually say it out loud — normal "
+        "sentences, not a stat dump with every number in parentheses. "
+        "Only mention numbers when they help make the point, not on every "
+        "sentence. Stay factual and only use what's in the summary below — "
+        "don't invent details.\n\n"
         + summary_text
     )
 
@@ -1232,21 +1236,28 @@ def get_ai_analysis(summary_text: str) -> str:
 
     english_text = "".join(b.text for b in msg.content if b.type == "text")
 
-    # Step 2: Thai translation of that exact English text — best-effort.
-    # If this call fails for any reason, we still return the English
-    # analysis untouched rather than losing it.
+    # Step 2: Thai version of that exact analysis — best-effort. If this
+    # call fails for any reason, we still return the English analysis
+    # untouched rather than losing it. max_tokens is well above the
+    # English length since Thai script runs more tokens per word for the
+    # same content — too tight a budget here is what was silently cutting
+    # the Thai text off mid-sentence before.
     translate_prompt = (
-        "Translate the following agrochemical portfolio analysis into "
-        "natural, fluent Thai. Keep HRAC/IRAC/FRAC codes, tier names "
-        "(Generic/Medium/Premium), and crop/company/product names "
-        "untranslated so they stay easy to cross-check against the "
-        "original data. Output ONLY the Thai translation, no preamble.\n\n"
+        "Rewrite the following agrochemical portfolio analysis in Thai — "
+        "not a literal, word-for-word translation, but how a Thai-speaking "
+        "agronomist would naturally explain the same points to a colleague. "
+        "Keep every point from the original, including the Fertilizer "
+        "category and the closing priorities — don't drop or shorten any "
+        "section. Keep HRAC/IRAC/FRAC codes, tier names (Generic/Medium/"
+        "Premium), and crop/company/product names untranslated so they "
+        "stay easy to cross-check against the original data. Output ONLY "
+        "the Thai text, no preamble.\n\n"
         + english_text
     )
     try:
         thai_msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=900,
+            max_tokens=1800,
             messages=[{"role": "user", "content": translate_prompt}],
             extra_headers=extra_headers,
         )
