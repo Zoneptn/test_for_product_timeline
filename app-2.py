@@ -726,12 +726,18 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
                       key_cols: list, company: str,
                       code_col: str, code_label: str,
                       product_html_fn=_default_product_html,
-                      track_moa: bool = False) -> pd.DataFrame:
+                      track_moa: bool = False,
+                      name_col: str = "trade_name",
+                      common_col: str = "common_name") -> pd.DataFrame:
     """track_moa=True additionally computes, per window, how many DISTINCT
     resistance codes (HRAC/IRAC/FRAC) the covering products use — a single
     group across every product covering that window is a resistance-
     rotation flag. Not meaningful for the fertilizer board (code_col there
-    is "type", not a resistance class), so it defaults off."""
+    is "type", not a resistance class), so it defaults off.
+
+    name_col/common_col control which columns feed the plain-text
+    product_names / active_ingredients output columns — trade_name/
+    common_name for weed/insect/disease, brand/formula for fertilizer."""
     df = window_df.copy()
 
     if product_df.empty or not company or "company" not in product_df.columns:
@@ -740,6 +746,8 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
         df["product_list_html"] = "—"
         df["other_company_count"] = 0
         df["tier_mix"] = "—"
+        df["product_names"] = "—"
+        df["active_ingredients"] = "—"
         if track_moa:
             df["moa_mix"] = "—"
             df["moa_group_count"] = 0
@@ -751,6 +759,8 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
     matched_map = {}
     tier_mix_map = {}
     moa_mix_map = {}
+    product_names_map = {}
+    active_ing_map = {}
     if not company_products.empty:
         for keys, g in company_products.groupby(key_cols, dropna=False):
             k = keys if isinstance(keys, tuple) else (keys,)
@@ -760,6 +770,12 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
             if track_moa and code_col in g.columns:
                 codes_present = sorted({str(c) for c in g[code_col].dropna().astype(str) if str(c).strip()})
                 moa_mix_map[k] = codes_present
+            names_present = sorted({str(v).strip() for v in g.get(name_col, pd.Series(dtype=object)).dropna()
+                                     if str(v).strip()})
+            product_names_map[k] = "; ".join(names_present) if names_present else "—"
+            common_present = sorted({str(v).strip() for v in g.get(common_col, pd.Series(dtype=object)).dropna()
+                                      if str(v).strip()})
+            active_ing_map[k] = "; ".join(common_present) if common_present else "—"
 
     other_count_map = {}
     if not other_products.empty:
@@ -776,6 +792,8 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
     df["product_list_html"] = df["_key"].map(lambda k: matched_map.get(k, "—"))
     df["other_company_count"] = df["_key"].map(lambda k: other_count_map.get(k, 0))
     df["tier_mix"] = df["_key"].map(lambda k: tier_mix_map.get(k, "—"))
+    df["product_names"] = df["_key"].map(lambda k: product_names_map.get(k, "—"))
+    df["active_ingredients"] = df["_key"].map(lambda k: active_ing_map.get(k, "—"))
     if track_moa:
         df["moa_mix"] = df["_key"].map(lambda k: ", ".join(moa_mix_map.get(k, [])) or "—")
         df["moa_group_count"] = df["_key"].map(lambda k: len(moa_mix_map.get(k, [])))
@@ -967,7 +985,7 @@ def weed_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["weed_stage", "weed_science", "weed_name_en", "weed_name_th",
                    "type", "start_day", "end_day", "coverage_status", "tier_mix",
-                   "hrac_mix", "hrac_group_count"]
+                   "product_names", "active_ingredients", "hrac_mix", "hrac_group_count"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
 
 
@@ -1015,7 +1033,8 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     sort_col="rank" if has_rank else "order",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["pest_name_en", "pest_name_th", "order", "start_day", "end_day",
-                   "coverage_status", "tier_mix", "irac_mix", "irac_group_count"]
+                   "coverage_status", "tier_mix", "product_names", "active_ingredients",
+                   "irac_mix", "irac_group_count"]
     if has_rank:
         detail_cols.insert(3, "rank")
     return fig, df[detail_cols], df["covered"].sum(), len(df)
@@ -1057,7 +1076,7 @@ def disease_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["disease_name_sc", "disease_name_en", "disease_name_th",
                    "type", "start_day", "end_day", "coverage_status", "tier_mix",
-                   "frac_mix", "frac_group_count"]
+                   "product_names", "active_ingredients", "frac_mix", "frac_group_count"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
 
 
@@ -1073,7 +1092,8 @@ def _fertilizer_coverage_core(crop_id, sheets, crop_stage_df, stage_label_col,
 
     key_cols = ["stage_id"]
     df = compute_coverage(window_df, product_df, key_cols, company, "type", "Type",
-                           product_html_fn=_fertilizer_product_html)
+                           product_html_fn=_fertilizer_product_html,
+                           name_col="brand", common_col="formula")
 
     row_label_map = dict(zip(df["stage_id"], df["stage"]))
 
@@ -1091,7 +1111,8 @@ def _fertilizer_coverage_core(crop_id, sheets, crop_stage_df, stage_label_col,
                                     stage_df=crop_stage_df, stage_label_col=stage_label_col,
                                     row_label_map=row_label_map, sort_col="start_day",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
-    detail_cols = ["stage", "start_day", "end_day", "coverage_status", "tier_mix"]
+    detail_cols = ["stage", "start_day", "end_day", "coverage_status", "tier_mix",
+                   "product_names", "active_ingredients"]
     return fig, df[detail_cols], df["covered"].sum(), len(df), product_df_all
 
 
@@ -1146,20 +1167,24 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
         "=== Weed (herbicide) coverage ===",
         _table_for_ai(weed_df, ["weed_science", "weed_name_en", "weed_name_th", "type",
                                  "start_day", "end_day", "coverage_status", "tier_mix",
+                                 "product_names", "active_ingredients",
                                  "hrac_mix", "hrac_group_count"]),
         "",
         "=== Insect (insecticide) coverage ===",
         _table_for_ai(pest_df, ["pest_name_en", "pest_name_th", "order", "rank",
                                  "start_day", "end_day", "coverage_status", "tier_mix",
+                                 "product_names", "active_ingredients",
                                  "irac_mix", "irac_group_count"]),
         "",
         "=== Disease (fungicide) coverage ===",
         _table_for_ai(disease_df, ["disease_name_sc", "disease_name_en", "disease_name_th",
                                     "type", "start_day", "end_day", "coverage_status",
-                                    "tier_mix", "frac_mix", "frac_group_count"]),
+                                    "tier_mix", "product_names", "active_ingredients",
+                                    "frac_mix", "frac_group_count"]),
         "",
         "=== Fertilizer coverage ===",
-        _table_for_ai(fert_df, ["stage", "start_day", "end_day", "coverage_status", "tier_mix"]),
+        _table_for_ai(fert_df, ["stage", "start_day", "end_day", "coverage_status", "tier_mix",
+                                 "product_names", "active_ingredients"]),
     ]
     return "\n".join(parts)
 
@@ -1192,10 +1217,21 @@ def get_ai_analysis(summary_text: str) -> str:
         "and one company — one row per pressure window. Column notes: "
         "coverage_status is 'Has Product' or 'No Product' for that window; "
         "tier_mix lists the tiers (Generic/Medium/Premium) of the covering "
-        "products; hrac_mix/irac_mix/frac_mix list the distinct resistance "
-        "codes covering that window (a single code = rotation risk); each "
-        "pest/weed/disease has both an English and a Thai name column — "
-        "use whichever name fits naturally, they refer to the same thing.\n\n"
+        "products; product_names lists the trade name(s) (brand name for "
+        "Fertilizer) covering that window; active_ingredients lists the "
+        "common/active-ingredient name(s) (formula for Fertilizer); "
+        "hrac_mix/irac_mix/frac_mix list the distinct resistance codes "
+        "covering that window (a single code = rotation risk); each pest/"
+        "weed/disease has both an English and a Thai name column — use "
+        "whichever name fits naturally, they refer to the same thing.\n\n"
+        "IMPORTANT — a single product commonly appears in the "
+        "product_names column across MANY different rows/windows within "
+        "the same category. That means one product handles multiple "
+        "pests/weeds/diseases, not that each row is a separate product. "
+        "When you notice a product name repeating across several windows, "
+        "call that out as a portfolio efficiency signal (e.g. 'Product X "
+        "alone covers 5 of the 9 covered insect windows') rather than "
+        "treating each row as independent.\n\n"
         "Read all four tables yourself and explain in plain, natural "
         "prose:\n"
         "- Where the portfolio is strong and where it's genuinely thin, "
@@ -1204,6 +1240,8 @@ def get_ai_analysis(summary_text: str) -> str:
         "category pulls that either way.\n"
         "- Any single-resistance-code windows worth flagging as a rotation "
         "risk.\n"
+        "- Any product that's doing a lot of the work across many windows, "
+        "if that pattern shows up.\n"
         "- End with 2-3 sentences on what to prioritize.\n\n"
         "Write it the way you'd actually say it out loud — normal "
         "sentences, not a stat dump with every number in parentheses. "
@@ -1224,7 +1262,16 @@ def get_ai_analysis(summary_text: str) -> str:
     except Exception as e:
         return f"⚠️ AI analysis failed: {e}"
 
-    english_text = "".join(b.text for b in msg.content if b.type == "text")
+    english_text = "".join(b.text for b in msg.content if b.type == "text").strip()
+
+    if not english_text:
+        # Something came back with no usable text — don't hand an empty
+        # string to the translation step (that's what produced the
+        # confusing "no content was attached" Thai reply). Surface enough
+        # detail to tell a genuine network hiccup apart from e.g. hitting
+        # max_tokens with nothing but reasoning/tool blocks.
+        return (f"⚠️ AI analysis came back empty (stop_reason: `{msg.stop_reason}`). "
+                "This is usually a transient issue — try clicking the button again.")
 
     # Step 2: Thai version of that exact analysis — best-effort. If this
     # call fails for any reason, we still return the English analysis
