@@ -1121,43 +1121,15 @@ BOARDS_COV = {
 # step is needed — just build a compact text summary and send it.
 # =====================================================================
 
-def _category_summary(label: str, detail_df: pd.DataFrame, moa_col: str = None,
-                       moa_count_col: str = None, moa_label: str = None) -> str:
+def _table_for_ai(detail_df: pd.DataFrame, cols: list) -> str:
+    """Raw CSV of the exact detail table shown on screen — Claude reads
+    structured data far more reliably than a hand-flattened summary, and
+    this keeps every name column (English + Thai) explicit instead of
+    guessing which single column to use as a label."""
     if detail_df.empty:
-        return f"{label}: no data for this crop."
-
-    total = len(detail_df)
-    covered_df = detail_df[detail_df["coverage_status"] == "Has Product"]
-    gap_df = detail_df[detail_df["coverage_status"] == "No Product"]
-
-    label_col = next(c for c in detail_df.columns if c not in (
-        "start_day", "end_day", "coverage_status", "tier_mix",
-        "type", "order", "rank", moa_col, moa_count_col,
-    ))
-
-    tier_counts = {t: 0 for t in TIER_ORDER}
-    for mix in covered_df["tier_mix"]:
-        for t in str(mix).split(", "):
-            if t in tier_counts:
-                tier_counts[t] += 1
-
-    lines = [
-        f"{label}: {len(covered_df)}/{total} windows covered.",
-        f"  Tier mix on covered windows: "
-        f"{', '.join(f'{t}={n}' for t, n in tier_counts.items() if n) or 'n/a'}",
-        f"  Uncovered windows ({len(gap_df)}): "
-        f"{', '.join(gap_df[label_col].astype(str).tolist()) or 'none'}",
-    ]
-
-    if moa_col and moa_count_col and moa_count_col in covered_df.columns:
-        single_group = covered_df[covered_df[moa_count_col] == 1]
-        if not single_group.empty:
-            lines.append(
-                f"  Single-{moa_label}-group windows (resistance rotation risk): "
-                f"{', '.join(single_group[label_col].astype(str).tolist())}"
-            )
-
-    return "\n".join(lines)
+        return "(no data for this crop)"
+    present = [c for c in cols if c in detail_df.columns]
+    return detail_df[present].to_csv(index=False)
 
 
 def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
@@ -1171,13 +1143,23 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
         f"Crop: {crop_choice}",
         f"Company: {company}",
         "",
-        _category_summary("Weed (herbicide)", weed_df, "hrac_mix", "hrac_group_count", "HRAC"),
+        "=== Weed (herbicide) coverage ===",
+        _table_for_ai(weed_df, ["weed_science", "weed_name_en", "weed_name_th", "type",
+                                 "start_day", "end_day", "coverage_status", "tier_mix",
+                                 "hrac_mix", "hrac_group_count"]),
         "",
-        _category_summary("Insect (insecticide)", pest_df, "irac_mix", "irac_group_count", "IRAC"),
+        "=== Insect (insecticide) coverage ===",
+        _table_for_ai(pest_df, ["pest_name_en", "pest_name_th", "order", "rank",
+                                 "start_day", "end_day", "coverage_status", "tier_mix",
+                                 "irac_mix", "irac_group_count"]),
         "",
-        _category_summary("Disease (fungicide)", disease_df, "frac_mix", "frac_group_count", "FRAC"),
+        "=== Disease (fungicide) coverage ===",
+        _table_for_ai(disease_df, ["disease_name_sc", "disease_name_en", "disease_name_th",
+                                    "type", "start_day", "end_day", "coverage_status",
+                                    "tier_mix", "frac_mix", "frac_group_count"]),
         "",
-        _category_summary("Fertilizer", fert_df),
+        "=== Fertilizer coverage ===",
+        _table_for_ai(fert_df, ["stage", "start_day", "end_day", "coverage_status", "tier_mix"]),
     ]
     return "\n".join(parts)
 
@@ -1205,21 +1187,29 @@ def get_ai_analysis(summary_text: str) -> str:
 
     english_prompt = (
         "You're an agronomist colleague talking through a product coverage "
-        "table with a teammate — not writing a formal report. Read the "
-        "summary below (one company, one crop, across Weed/Insect/Disease/"
-        "Fertilizer) and explain in plain, natural prose:\n"
+        "table with a teammate — not writing a formal report. Below are "
+        "four CSV tables (Weed, Insect, Disease, Fertilizer) for one crop "
+        "and one company — one row per pressure window. Column notes: "
+        "coverage_status is 'Has Product' or 'No Product' for that window; "
+        "tier_mix lists the tiers (Generic/Medium/Premium) of the covering "
+        "products; hrac_mix/irac_mix/frac_mix list the distinct resistance "
+        "codes covering that window (a single code = rotation risk); each "
+        "pest/weed/disease has both an English and a Thai name column — "
+        "use whichever name fits naturally, they refer to the same thing.\n\n"
+        "Read all four tables yourself and explain in plain, natural "
+        "prose:\n"
         "- Where the portfolio is strong and where it's genuinely thin, "
         "category by category — include all four categories, even briefly.\n"
         "- Whether it leans Generic, Medium, or Premium overall, and which "
         "category pulls that either way.\n"
-        "- Any single-MoA-group windows worth flagging as a resistance "
-        "rotation risk.\n"
+        "- Any single-resistance-code windows worth flagging as a rotation "
+        "risk.\n"
         "- End with 2-3 sentences on what to prioritize.\n\n"
         "Write it the way you'd actually say it out loud — normal "
         "sentences, not a stat dump with every number in parentheses. "
         "Only mention numbers when they help make the point, not on every "
-        "sentence. Stay factual and only use what's in the summary below — "
-        "don't invent details.\n\n"
+        "sentence. Stay strictly factual and only use what's in the tables "
+        "below — don't invent details.\n\n"
         + summary_text
     )
 
