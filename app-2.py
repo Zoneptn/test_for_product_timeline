@@ -1143,6 +1143,33 @@ BOARDS_COV = {
 # step is needed — just build a compact text summary and send it.
 # =====================================================================
 
+def _entity_coverage_summary(detail_df: pd.DataFrame, entity_col: str, label: str) -> str:
+    """Distinct-entity coverage stats (e.g. per-PEST, not per-window).
+
+    A single pest/weed/disease can have multiple rows in the detail
+    table — one per pressure window within the season — so counting rows
+    answers 'how many windows are covered', not 'how many pests are
+    covered'. This computes the latter correctly by grouping on the
+    entity's name column and checking whether AT LEAST ONE of its
+    windows has a product, so the AI prompt never has to (and can't
+    reliably) infer it by counting CSV rows itself."""
+    if detail_df.empty or entity_col not in detail_df.columns:
+        return f"(no {label} data for this crop)"
+    has_product = detail_df.groupby(entity_col)["coverage_status"].apply(
+        lambda s: bool((s == "Has Product").any())
+    )
+    total = len(has_product)
+    covered = int(has_product.sum())
+    uncovered = sorted(has_product[~has_product].index.tolist())
+    lines = [f"{covered} of {total} distinct {label} have at least one covered window."]
+    if uncovered:
+        lines.append(f"{label.capitalize()} with ZERO covered windows (fully uncovered): "
+                      + "; ".join(uncovered))
+    else:
+        lines.append(f"Every {label} has at least one covered window.")
+    return "\n".join(lines)
+
+
 def _table_for_ai(detail_df: pd.DataFrame, cols: list) -> str:
     """Raw CSV of the exact detail table shown on screen — Claude reads
     structured data far more reliably than a hand-flattened summary, and
@@ -1166,24 +1193,42 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
         f"Company: {company}",
         "",
         "=== Weed (herbicide) coverage ===",
+        "--- Entity-level summary (use THIS for any 'X of Y weeds are covered' "
+        "style statement — do NOT count CSV rows below for this, since one "
+        "weed can have multiple rows for different time windows) ---",
+        _entity_coverage_summary(weed_df, "weed_science", "weeds"),
+        "--- Row-level detail (one row = one pressure window, not one weed) ---",
         _table_for_ai(weed_df, ["weed_science", "weed_name_en", "weed_name_th", "type",
                                  "start_day", "end_day", "coverage_status", "tier_mix",
                                  "product_names", "active_ingredients",
                                  "hrac_mix", "hrac_group_count"]),
         "",
         "=== Insect (insecticide) coverage ===",
+        "--- Entity-level summary (use THIS for any 'X of Y pests are covered' "
+        "style statement — do NOT count CSV rows below for this, since one "
+        "pest can have multiple rows for different time windows) ---",
+        _entity_coverage_summary(pest_df, "pest_name_en", "pests"),
+        "--- Row-level detail (one row = one pressure window, not one pest) ---",
         _table_for_ai(pest_df, ["pest_name_en", "pest_name_th", "order", "rank",
                                  "start_day", "end_day", "coverage_status", "tier_mix",
                                  "product_names", "active_ingredients",
                                  "irac_mix", "irac_group_count"]),
         "",
         "=== Disease (fungicide) coverage ===",
+        "--- Entity-level summary (use THIS for any 'X of Y diseases are "
+        "covered' style statement — do NOT count CSV rows below for this, "
+        "since one disease can have multiple rows for different time "
+        "windows) ---",
+        _entity_coverage_summary(disease_df, "disease_name_sc", "diseases"),
+        "--- Row-level detail (one row = one pressure window, not one disease) ---",
         _table_for_ai(disease_df, ["disease_name_sc", "disease_name_en", "disease_name_th",
                                     "type", "start_day", "end_day", "coverage_status",
                                     "tier_mix", "product_names", "active_ingredients",
                                     "frac_mix", "frac_group_count"]),
         "",
         "=== Fertilizer coverage ===",
+        "(Fertilizer rows are already one-per-application-stage — no "
+        "entity/window distinction applies here.)",
         _table_for_ai(fert_df, ["stage", "start_day", "end_day", "coverage_status", "tier_mix",
                                  "product_names", "active_ingredients"]),
     ]
@@ -1290,6 +1335,17 @@ def get_ai_analysis(summary_text: str, style: str = "Detailed") -> str:
         "call that out as a portfolio efficiency signal (e.g. 'Product X "
         "alone covers 5 of the 9 covered insect windows') rather than "
         "treating each row as independent.\n\n"
+        "IMPORTANT — a single pest/weed/disease can also appear across "
+        "MULTIPLE rows, one per pressure window within the season. So the "
+        "number of CSV rows is NOT the number of distinct pests/weeds/"
+        "diseases, and counting rows will give you the wrong number. For "
+        "any statement like 'X of Y pests/weeds/diseases are covered', you "
+        "MUST use the 'Entity-level summary' figure given right before "
+        "each category's table below — never compute this by counting "
+        "rows yourself. Use the word 'window' only when specifically "
+        "describing a single time period from a row (e.g. 'this window in "
+        "May'), and use 'pest'/'weed'/'disease' only when referring to the "
+        "distinct organism using the entity-level count.\n\n"
         + cfg["instructions"] + "\n\n"
         "For everything about THIS company's actual coverage — which "
         "windows have a product, which don't, which trade names/active "
