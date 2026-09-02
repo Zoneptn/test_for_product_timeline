@@ -1190,7 +1190,62 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
     return "\n".join(parts)
 
 
-def get_ai_analysis(summary_text: str) -> str:
+ANALYSIS_STYLE_CONFIG = {
+    "Concise": {
+        # Short and skimmable — a few sentences per category plus one
+        # priority line. Naturally fits comfortably inside 2500 tokens
+        # (which is why 2500 always felt "enough" for a brief summary),
+        # so a lower cap here is both correct and keeps latency down.
+        "instructions": (
+            "Write a SHORT, skimmable summary — not a full report. For "
+            "each of the four categories (Weed, Insect, Disease, "
+            "Fertilizer), give ONE sentence on whether coverage is strong "
+            "or thin and the single most important reason why. Skip minor "
+            "detail, skip restating every window, skip a portfolio tier "
+            "breakdown unless it's the single biggest issue. End with ONE "
+            "sentence naming the single highest-priority gap to fix. "
+            "Target roughly 250-350 words total, in plain natural prose "
+            "(no headers, no bullet list)."
+        ),
+        "max_tokens": 3200,
+        "thai_max_tokens": 4000,
+    },
+    "Detailed": {
+        # Full walkthrough — covers all four categories with portfolio
+        # efficiency signals, rotation-risk flags, and a closing summary.
+        "instructions": (
+            "Read all four tables yourself and explain in plain, natural "
+            "prose:\n"
+            "- Where the portfolio is strong and where it's genuinely thin, "
+            "category by category — include all four categories, even briefly.\n"
+            "- Whether it leans Generic, Medium, or Premium overall, and which "
+            "category pulls that either way.\n"
+            "- Any single-resistance-code windows worth flagging as a rotation "
+            "risk.\n"
+            "- Any product that's doing a lot of the work across many windows, "
+            "if that pattern shows up.\n"
+            "- End with 2-3 sentences on what to prioritize.\n\n"
+            "Write it the way you'd actually say it out loud — normal "
+            "sentences, not a stat dump with every number in parentheses. "
+            "Only mention numbers when they help make the point, not on every "
+            "sentence. Aim for concise explanation — enough to cover "
+            "all four categories properly, but don't pad it out."
+        ),
+        # max_tokens=5000: covering all four categories plus portfolio-
+        # efficiency signals, rotation-risk flags, and a closing summary
+        # in one response is comfortably a few thousand tokens of prose
+        # for crops with many pressure windows. 2500 was cutting this off
+        # mid-answer (stop_reason: max_tokens) on larger crops; 5000
+        # gives real headroom without being wastefully large. Note: this
+        # is a ceiling, not a target — a small crop still gets a short
+        # response even with a high cap.
+        "max_tokens": 5000,
+        "thai_max_tokens": 6500,
+    },
+}
+
+
+def get_ai_analysis(summary_text: str, style: str = "Detailed") -> str:
     try:
         api_key = st.secrets["anthropic"]["api_key"]
     except (KeyError, FileNotFoundError):
@@ -1210,6 +1265,8 @@ def get_ai_analysis(summary_text: str) -> str:
     extra_headers = {"anthropic-workspace-id": workspace_id} if workspace_id else {}
 
     client = anthropic.Anthropic(api_key=api_key)
+
+    cfg = ANALYSIS_STYLE_CONFIG.get(style, ANALYSIS_STYLE_CONFIG["Detailed"])
 
     english_prompt = (
         "You're an agronomist colleague talking through a product coverage "
@@ -1233,40 +1290,33 @@ def get_ai_analysis(summary_text: str) -> str:
         "call that out as a portfolio efficiency signal (e.g. 'Product X "
         "alone covers 5 of the 9 covered insect windows') rather than "
         "treating each row as independent.\n\n"
-        "Read all four tables yourself and explain in plain, natural "
-        "prose:\n"
-        "- Where the portfolio is strong and where it's genuinely thin, "
-        "category by category — include all four categories, even briefly.\n"
-        "- Whether it leans Generic, Medium, or Premium overall, and which "
-        "category pulls that either way.\n"
-        "- Any single-resistance-code windows worth flagging as a rotation "
-        "risk.\n"
-        "- Any product that's doing a lot of the work across many windows, "
-        "if that pattern shows up.\n"
-        "- End with 2-3 sentences on what to prioritize.\n\n"
-        "Write it the way you'd actually say it out loud — normal "
-        "sentences, not a stat dump with every number in parentheses. "
-        "Only mention numbers when they help make the point, not on every "
-        "sentence. Aim for concise explanation — enough to cover "
-        "all four categories properly, but don't pad it out. Stay strictly "
-        "factual and only use what's in the tables below — don't invent "
-        "please consider that each pests shoud have around 2 -3 product with different MOA, this is the best practice. If the company want to cover the solution"
-        "details.\n\n"
+        + cfg["instructions"] + "\n\n"
+        "For everything about THIS company's actual coverage — which "
+        "windows have a product, which don't, which trade names/active "
+        "ingredients/tiers/resistance codes appear — stay strictly factual "
+        "and only use what's in the tables below; never invent a product, "
+        "code, or coverage status that isn't there.\n\n"
+        "On top of that, you MAY bring in your own general agronomic "
+        "knowledge to make the analysis more useful — e.g. whether a "
+        "listed active ingredient is generally considered a strong or "
+        "weak choice for that pest/weed/disease, common resistance "
+        "concerns for a given MOA/mode of action, whether a gap is "
+        "typically hard or easy to fill in the market, or general best "
+        "practice context. When you do this, make it clearly read as "
+        "general knowledge/context (e.g. 'X is generally known for...', "
+        "'a common industry concern with this MOA is...') rather than "
+        "presenting it as something read off the table. Please consider "
+        "that each pest/weed/disease should ideally have around 2-3 "
+        "products with different MOA if the company wants to fully cover "
+        "resistance-rotation best practice — flag where that's not met.\n\n"
         + summary_text
     )
 
     # Step 1: English analysis — this is the guaranteed part of the output.
-    # max_tokens=5000: the prompt requires covering all four categories
-    # (Weed/Insect/Disease/Fertilizer) plus portfolio-efficiency signals,
-    # rotation-risk flags, and a closing summary in one response — that's
-    # comfortably a few thousand tokens of prose for crops with many
-    # pressure windows. 2500 was cutting this off mid-answer
-    # (stop_reason: max_tokens) on larger crops; 5000 gives real headroom
-    # without being wastefully large.
     try:
         msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=5000,
+            max_tokens=cfg["max_tokens"],
             messages=[{"role": "user", "content": english_prompt}],
             extra_headers=extra_headers,
         )
@@ -1306,7 +1356,7 @@ def get_ai_analysis(summary_text: str) -> str:
     try:
         thai_msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=6500,
+            max_tokens=cfg["thai_max_tokens"],
             messages=[{"role": "user", "content": translate_prompt}],
             extra_headers=extra_headers,
         )
@@ -1387,13 +1437,19 @@ def render_coverage_view():
                 st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
         st.divider()
+        analysis_style = st.radio(
+            "Analysis style", ["Concise", "Detailed"], index=0, horizontal=True,
+            key="cov_ai_style",
+            help="Concise: a few sentences per category plus one priority. "
+                 "Detailed: full walkthrough with rotation-risk and tier notes.",
+        )
         if st.button("🤖 Analyze full coverage (Weed + Insect + Disease + Fertilizer)",
                       key="cov_ai_button"):
             with st.spinner("Analyzing coverage across all boards..."):
                 summary_text = build_full_coverage_summary(
                     crop_id, sheets, crop_stage_df, label_col, crop_choice, company_choice
                 )
-                analysis = get_ai_analysis(summary_text)
+                analysis = get_ai_analysis(summary_text, style=analysis_style)
             st.markdown("#### AI Analysis")
             st.markdown(analysis)
             with st.expander("Raw summary sent to AI"):
