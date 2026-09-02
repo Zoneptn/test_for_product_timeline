@@ -1297,7 +1297,7 @@ def get_ai_analysis(summary_text: str) -> str:
     try:
         thai_msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=3200,
+            max_tokens=3500,
             messages=[{"role": "user", "content": translate_prompt}],
             extra_headers=extra_headers,
         )
