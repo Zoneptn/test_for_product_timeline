@@ -588,7 +588,8 @@ def render_threat_view():
 #   disease_fun : crop_id, disease_id, disease_name_th, fun_id, trade_name
 #   fertilizer  : crop_id, stage_id, fer_id, stage
 #
-# tier (on every master sheet) expects: Generic / Medium / Premium.
+# tier (on every master sheet) accepts a range of real-world spellings
+# (e.g. "premium", "Mid-Tier", "generic") — see TIER_ALIASES below.
 # Blank or unrecognized values fall back to Generic. company must exist
 # on each master sheet for the company filter/coverage check to work —
 # if it's missing (e.g. prod_fer hasn't been given one yet), that
@@ -1255,10 +1256,17 @@ def get_ai_analysis(summary_text: str) -> str:
     )
 
     # Step 1: English analysis — this is the guaranteed part of the output.
+    # max_tokens=5000: the prompt requires covering all four categories
+    # (Weed/Insect/Disease/Fertilizer) plus portfolio-efficiency signals,
+    # rotation-risk flags, and a closing summary in one response — that's
+    # comfortably a few thousand tokens of prose for crops with many
+    # pressure windows. 2500 was cutting this off mid-answer
+    # (stop_reason: max_tokens) on larger crops; 5000 gives real headroom
+    # without being wastefully large.
     try:
         msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=2500,
+            max_tokens=5000,
             messages=[{"role": "user", "content": english_prompt}],
             extra_headers=extra_headers,
         )
@@ -1278,10 +1286,11 @@ def get_ai_analysis(summary_text: str) -> str:
 
     # Step 2: Thai version of that exact analysis — best-effort. If this
     # call fails for any reason, we still return the English analysis
-    # untouched rather than losing it. max_tokens is well above the
-    # English length since Thai script runs more tokens per word for the
-    # same content — too tight a budget here is what was silently cutting
-    # the Thai text off mid-sentence before.
+    # untouched rather than losing it. max_tokens is set well above the
+    # English call's own cap (not just above the English response's
+    # actual length) since Thai script commonly runs more tokens per
+    # word for the same content — too tight a budget here is what was
+    # silently cutting the Thai text off mid-sentence before.
     translate_prompt = (
         "Rewrite the following agrochemical portfolio analysis in Thai — "
         "not a literal, word-for-word translation, but how a Thai-speaking "
@@ -1297,11 +1306,13 @@ def get_ai_analysis(summary_text: str) -> str:
     try:
         thai_msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=3500,
+            max_tokens=6500,
             messages=[{"role": "user", "content": translate_prompt}],
             extra_headers=extra_headers,
         )
         thai_text = "".join(b.text for b in thai_msg.content if b.type == "text")
+        if not thai_text.strip():
+            thai_text = None
     except Exception:
         thai_text = None
 
