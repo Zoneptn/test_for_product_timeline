@@ -1246,9 +1246,10 @@ def get_ai_analysis(summary_text: str) -> str:
         "Write it the way you'd actually say it out loud — normal "
         "sentences, not a stat dump with every number in parentheses. "
         "Only mention numbers when they help make the point, not on every "
-        "sentence. Aim for roughly 300-400 words total — enough to cover "
+        "sentence. Aim for concise explanation — enough to cover "
         "all four categories properly, but don't pad it out. Stay strictly "
         "factual and only use what's in the tables below — don't invent "
+        "please consider that each pests shoud have around 2 -3 product with different MOA, this is the best practice. If the company want to cover the solution"
         "details.\n\n"
         + summary_text
     )
