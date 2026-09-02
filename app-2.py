@@ -806,14 +806,8 @@ def _default_product_html(g: pd.DataFrame, code_col: str, code_label: str,
             price_fmt = _format_price(r.get(cost_col))
             if price_fmt:
                 cost_str = f" | {price_fmt}/{cost_unit_label}"
-        # Tier and efficacy get their own line (indented) under the
-        # product name — cramming both onto one line after the HRAC/
-        # IRAC/FRAC code made it hard to scan at a glance.
-        lines.append(
-            f"• <b>{trade}</b> — {common} {conc} ({form}) [{code_label} {code}]<br>"
-            f"&nbsp;&nbsp;&nbsp;&nbsp;{tier}<br>"
-            f"&nbsp;&nbsp;&nbsp;&nbsp;{efficacy}{cost_str}"
-        )
+        lines.append(f"• <b>{trade}</b> — {common} {conc} ({form}) [{code_label} {code}] "
+                     f"{tier} | {efficacy}{cost_str}")
     return "<br>".join(lines) if lines else "—"
 
 
@@ -1140,11 +1134,7 @@ def weed_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
         if row["covered"]:
             moa_line = f"<br><i>HRAC groups: {row['hrac_mix']} ({row['hrac_group_count']} distinct)</i>" \
                 if row['hrac_group_count'] else ""
-            eff = row.get("efficacy_mix", "")
-            eff_line = f"<br><i>Efficacy: {eff}</i>" if eff and eff not in ("—", "Excellent") else ""
-            cost = row.get("cost_summary", "")
-            cost_line = f"<br><i>Cost: {cost}</i>" if cost and cost != "—" else ""
-            return base + f"<b>{company} products:</b><br>{row['product_list_html']}{moa_line}{eff_line}{cost_line}<extra></extra>"
+            return base + f"<b>{company} products:</b><br>{row['product_list_html']}{moa_line}<extra></extra>"
         extra = f"<br><i>{row['other_company_count']} other company(ies) cover this</i>" if row['other_company_count'] else ""
         return base + f"<b>{company}: no product</b>{extra}<extra></extra>"
 
@@ -1194,11 +1184,7 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
         if row["covered"]:
             moa_line = f"<br><i>IRAC groups: {row['irac_mix']} ({row['irac_group_count']} distinct)</i>" \
                 if row['irac_group_count'] else ""
-            eff = row.get("efficacy_mix", "")
-            eff_line = f"<br><i>Efficacy: {eff}</i>" if eff and eff not in ("—", "Excellent") else ""
-            cost = row.get("cost_summary", "")
-            cost_line = f"<br><i>Cost: {cost}</i>" if cost and cost != "—" else ""
-            return base + f"<b>{company} products:</b><br>{row['product_list_html']}{moa_line}{eff_line}{cost_line}<extra></extra>"
+            return base + f"<b>{company} products:</b><br>{row['product_list_html']}{moa_line}<extra></extra>"
         extra = f"<br><i>{row['other_company_count']} other company(ies) cover this</i>" if row['other_company_count'] else ""
         return base + f"<b>{company}: no product</b>{extra}<extra></extra>"
 
@@ -1242,11 +1228,7 @@ def disease_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
         if row["covered"]:
             moa_line = f"<br><i>FRAC groups: {row['frac_mix']} ({row['frac_group_count']} distinct)</i>" \
                 if row['frac_group_count'] else ""
-            eff = row.get("efficacy_mix", "")
-            eff_line = f"<br><i>Efficacy: {eff}</i>" if eff and eff not in ("—", "Excellent") else ""
-            cost = row.get("cost_summary", "")
-            cost_line = f"<br><i>Cost: {cost}</i>" if cost and cost != "—" else ""
-            return base + f"<b>{company} products:</b><br>{row['product_list_html']}{moa_line}{eff_line}{cost_line}<extra></extra>"
+            return base + f"<b>{company} products:</b><br>{row['product_list_html']}{moa_line}<extra></extra>"
         extra = f"<br><i>{row['other_company_count']} other company(ies) cover this</i>" if row['other_company_count'] else ""
         return base + f"<b>{company}: no product</b>{extra}<extra></extra>"
 
