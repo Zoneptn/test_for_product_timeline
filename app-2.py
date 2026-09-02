@@ -1813,12 +1813,16 @@ def _price_target_options(sheets: dict, cfg: dict, crop_id) -> pd.DataFrame:
     ).sort_values("name_en")
 
 
-def _price_comparison_table(sheets: dict, cfg: dict, crop_id, target_id) -> pd.DataFrame:
+def _price_comparison_table(sheets: dict, cfg: dict, crop_id, target_id,
+                             ascending: bool = True) -> pd.DataFrame:
     """Every company's product linked to this target, across ALL windows
     that target appears in (deduped down to one row per product — price/
     size/usage/tier are product-level attributes and don't vary by
     window, only efficacy might, so efficacy is shown as a mix if it
-    does)."""
+    does). ascending=True sorts cheapest first, False sorts priciest
+    first; rows with no price data always sort to the bottom either way
+    so they never get mistaken for the cheapest (or most expensive)
+    option."""
     junction = sheets.get(cfg["junction"], pd.DataFrame())
     master = sheets.get(cfg["master"], pd.DataFrame())
     j_id, m_id = cfg["junction_id"], cfg["master_id"]
@@ -1860,13 +1864,13 @@ def _price_comparison_table(sheets: dict, cfg: dict, crop_id, target_id) -> pd.D
         })
     out = pd.DataFrame(rows, columns=empty_cols)
     out["_sort_cost"] = pd.to_numeric(out[cfg["cost_col"]], errors="coerce")
-    out = out.sort_values("_sort_cost", na_position="last").drop(columns=["_sort_cost"])
+    out = out.sort_values("_sort_cost", ascending=ascending, na_position="last").drop(columns=["_sort_cost"])
     return out.reset_index(drop=True)
 
 
 def render_price_comparison_view():
     st.title("💰 Price Comparison")
-    st.caption("Compare every company's product for a specific weed, pest, or disease — cheapest first.")
+    st.caption("Compare every company's product for a specific weed, pest, or disease.")
 
     data_file = get_file_cov()
     if data_file is None:
@@ -1907,12 +1911,18 @@ def render_price_comparison_view():
         st.stop()
 
     target_name_to_id = dict(zip(targets[name_col], targets[cfg["target_id_col"]]))
-    target_choice = st.selectbox(
-        f"{category_choice.split(' ')[0]} target", list(target_name_to_id.keys()), key="price_target"
-    )
+    col4, col5 = st.columns([3, 1])
+    with col4:
+        target_choice = st.selectbox(
+            f"{category_choice.split(' ')[0]} target", list(target_name_to_id.keys()), key="price_target"
+        )
+    with col5:
+        sort_choice = st.radio("Sort", ["Cheapest first", "Priciest first"],
+                                horizontal=True, key="price_sort")
     target_id = target_name_to_id[target_choice]
 
-    table = _price_comparison_table(sheets, cfg, crop_id, target_id)
+    table = _price_comparison_table(sheets, cfg, crop_id, target_id,
+                                     ascending=(sort_choice == "Cheapest first"))
     if table.empty:
         st.info(f"No products found across any company for {target_choice}.")
         st.stop()
