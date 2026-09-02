@@ -806,8 +806,14 @@ def _default_product_html(g: pd.DataFrame, code_col: str, code_label: str,
             price_fmt = _format_price(r.get(cost_col))
             if price_fmt:
                 cost_str = f" | {price_fmt}/{cost_unit_label}"
-        lines.append(f"• <b>{trade}</b> — {common} {conc} ({form}) [{code_label} {code}] "
-                     f"{tier} | {efficacy}{cost_str}")
+        # Tier and efficacy get their own line (indented) under the
+        # product name — cramming both onto one line after the HRAC/
+        # IRAC/FRAC code made it hard to scan at a glance.
+        lines.append(
+            f"• <b>{trade}</b> — {common} {conc} ({form}) [{code_label} {code}]<br>"
+            f"&nbsp;&nbsp;&nbsp;&nbsp;{tier}<br>"
+            f"&nbsp;&nbsp;&nbsp;&nbsp;{efficacy}{cost_str}"
+        )
     return "<br>".join(lines) if lines else "—"
 
 
