@@ -805,9 +805,9 @@ def _default_product_html(g: pd.DataFrame, code_col: str, code_label: str,
         if cost_col:
             price_fmt = _format_price(r.get(cost_col))
             if price_fmt:
-                cost_str = f" | {price_fmt}/{cost_unit_label}"
+                cost_str = f" | Cost: {price_fmt}/{cost_unit_label}"
         lines.append(f"• <b>{trade}</b> — {common} {conc} ({form}) [{code_label} {code}] "
-                     f"{tier} | {efficacy}{cost_str}")
+                     f"Tier: {tier} | Efficacy: {efficacy}{cost_str}")
     return "<br>".join(lines) if lines else "—"
 
 
@@ -835,8 +835,8 @@ def _fertilizer_product_html(g: pd.DataFrame, code_col: str, code_label: str,
         ton_price = _format_price(r.get("price_per_ton"))
         if ton_price:
             price_parts.append(f"{ton_price}/ton")
-        price_str = " | " + " | ".join(price_parts) if price_parts else ""
-        lines.append(f"• <b>{brand}</b> — {formula} ({ftype}) {tier}{price_str}")
+        price_str = " | Cost: " + " | ".join(price_parts) if price_parts else ""
+        lines.append(f"• <b>{brand}</b> — {formula} ({ftype}) Tier: {tier}{price_str}")
     return "<br>".join(lines) if lines else "—"
 
 
