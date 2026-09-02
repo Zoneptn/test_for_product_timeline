@@ -1354,11 +1354,17 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
     _, disease_df, _, _ = disease_board_cov(crop_id, sheets, crop_stage_df, label_col, company)
     _, fert_df, _, _, _ = _fertilizer_coverage_core(crop_id, sheets, crop_stage_df, label_col, company)
 
+    # Note: cost_summary is deliberately excluded from what's sent to the
+    # AI (even though it's computed and shown in the on-screen hover/
+    # detail table). Whether a price is expensive, cheap, or justified
+    # depends on real-world market context the model has no way to know —
+    # handing it price numbers risks a confident-sounding but baseless
+    # value judgment. Price stays a human-only decision here.
     parts = [
         f"Crop: {crop_choice}",
         f"Company: {company}",
         "",
-        "=== Weed (herbicide) coverage — cost_summary unit is per RAI ===",
+        "=== Weed (herbicide) coverage ===",
         "--- Entity-level summary (use THIS for any 'X of Y weeds are covered' "
         "style statement — do NOT count CSV rows below for this, since one "
         "weed can have multiple rows for different time windows) ---",
@@ -1366,10 +1372,10 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
         "--- Row-level detail (one row = one pressure window, not one weed) ---",
         _table_for_ai(weed_df, ["weed_science", "weed_name_en", "weed_name_th", "type",
                                  "start_day", "end_day", "coverage_status", "tier_mix",
-                                 "efficacy_mix", "cost_summary", "product_names",
+                                 "efficacy_mix", "product_names",
                                  "active_ingredients", "hrac_mix", "hrac_group_count"]),
         "",
-        "=== Insect (insecticide) coverage — cost_summary unit is per 20L SPRAY TANK ===",
+        "=== Insect (insecticide) coverage ===",
         "--- Entity-level summary (use THIS for any 'X of Y pests are covered' "
         "style statement — do NOT count CSV rows below for this, since one "
         "pest can have multiple rows for different time windows) ---",
@@ -1377,10 +1383,10 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
         "--- Row-level detail (one row = one pressure window, not one pest) ---",
         _table_for_ai(pest_df, ["pest_name_en", "pest_name_th", "order", "rank",
                                  "start_day", "end_day", "coverage_status", "tier_mix",
-                                 "efficacy_mix", "cost_summary", "product_names",
+                                 "efficacy_mix", "product_names",
                                  "active_ingredients", "irac_mix", "irac_group_count"]),
         "",
-        "=== Disease (fungicide) coverage — cost_summary unit is per 20L SPRAY TANK ===",
+        "=== Disease (fungicide) coverage ===",
         "--- Entity-level summary (use THIS for any 'X of Y diseases are "
         "covered' style statement — do NOT count CSV rows below for this, "
         "since one disease can have multiple rows for different time "
@@ -1389,24 +1395,15 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
         "--- Row-level detail (one row = one pressure window, not one disease) ---",
         _table_for_ai(disease_df, ["disease_name_sc", "disease_name_en", "disease_name_th",
                                     "type", "start_day", "end_day", "coverage_status",
-                                    "tier_mix", "efficacy_mix", "cost_summary", "product_names",
+                                    "tier_mix", "efficacy_mix", "product_names",
                                     "active_ingredients", "frac_mix", "frac_group_count"]),
         "",
-        "=== Fertilizer coverage — cost_summary unit is per BAG (retail) ===",
+        "=== Fertilizer coverage ===",
         "(Fertilizer rows are already one-per-application-stage — no "
         "entity/window distinction applies here. No efficacy_mix — "
         "efficacy isn't a meaningful concept for fertilizer.)",
         _table_for_ai(fert_df, ["stage", "start_day", "end_day", "coverage_status", "tier_mix",
-                                 "cost_summary", "product_names", "active_ingredients"]),
-        "",
-        "IMPORTANT ABOUT cost_summary UNITS: never compare cost_summary "
-        "numbers across the four sections above — ฿/rai (Weed), ฿/20L "
-        "tank (Insect, Disease), and ฿/bag (Fertilizer) are different "
-        "units measuring different things, and a direct numeric "
-        "comparison between them would be meaningless. Only compare "
-        "cost_summary values within the SAME category (e.g. one insect "
-        "product's ฿/20L tank against another insect product's ฿/20L "
-        "tank).",
+                                 "product_names", "active_ingredients"]),
     ]
     return "\n".join(parts)
 
@@ -1421,20 +1418,16 @@ ANALYSIS_STYLE_CONFIG = {
             "Write a SHORT, skimmable summary — not a full report. For "
             "each of the four categories (Weed, Insect, Disease, "
             "Fertilizer), give ONE sentence on whether coverage is strong "
-            "or thin — judged from coverage_status, efficacy_mix, AND "
-            "cost_summary together, not coverage_status alone, so a "
-            "category with high 'Has Product' counts but mostly "
-            "Weak/Unrated efficacy reads as thin, not strong — plus the "
-            "single most important reason why. If you spot a clear "
-            "cost-effectiveness point (a cheap-and-strong product, or an "
-            "expensive product that isn't meaningfully better), you may "
-            "mention it briefly, but don't force a price comment into "
-            "every category. Skip minor detail, skip restating every "
-            "window, skip a portfolio tier breakdown unless it's the "
-            "single biggest issue. End with ONE sentence naming the "
-            "single highest-priority gap to fix (a true no-product gap "
-            "or a covered-but-weak-efficacy soft gap — whichever leaves "
-            "the pest/weed/disease more exposed). Target roughly 250-350 "
+            "or thin — judged from coverage_status AND efficacy_mix "
+            "together, not coverage_status alone, so a category with high "
+            "'Has Product' counts but mostly Weak/Unrated efficacy reads "
+            "as thin, not strong — plus the single most important reason "
+            "why. Skip minor detail, skip restating every window, skip a "
+            "portfolio tier breakdown unless it's the single biggest "
+            "issue. End with ONE sentence naming the single "
+            "highest-priority gap to fix (a true no-product gap or a "
+            "covered-but-weak-efficacy soft gap — whichever leaves the "
+            "pest/weed/disease more exposed). Target roughly 250-350 "
             "words total, in plain natural prose (no headers, no bullet "
             "list)."
         ),
@@ -1449,8 +1442,8 @@ ANALYSIS_STYLE_CONFIG = {
             "prose:\n"
             "- Where the portfolio is strong and where it's genuinely thin, "
             "category by category — include all four categories, even "
-            "briefly. Base this judgment on coverage_status, efficacy_mix, "
-            "AND cost_summary together, not coverage_status alone — a "
+            "briefly. Base this judgment on coverage_status AND "
+            "efficacy_mix together, not coverage_status alone — a "
             "category with high 'Has Product' counts but mostly "
             "Weak/Unrated efficacy is NOT strong, it's a false sense of "
             "coverage, and should be described that way.\n"
@@ -1461,16 +1454,6 @@ ANALYSIS_STYLE_CONFIG = {
             "gaps', distinct from true no-product gaps, since a green "
             "light on the coverage board doesn't guarantee a strong "
             "product is in play.\n"
-            "- Cost-effectiveness patterns, where the data actually shows "
-            "one: a product that's both Excellent efficacy AND "
-            "reasonably priced relative to alternatives in the same "
-            "category is worth naming as a good pick; a product that "
-            "costs noticeably more without a meaningfully better "
-            "efficacy rating is worth flagging as questionable value. "
-            "Remember cost_summary units differ by category (per rai / "
-            "per 20L tank / per bag) — only compare within the same "
-            "category, never across them. Don't manufacture a price "
-            "point if the data doesn't clearly support one.\n"
             "- Any single-resistance-code windows worth flagging as a rotation "
             "risk.\n"
             "- Any product that's doing a lot of the work across many windows, "
@@ -1542,20 +1525,10 @@ def get_ai_analysis(summary_text: str, style: str = "Detailed") -> str:
         "Unrated — call that out as a soft spot, distinct from a true 'No "
         "Product' gap. Don't treat 'Unrated' as if it means poor efficacy; "
         "it only means the rating hasn't been documented yet.\n"
-        "cost_summary gives the covering product's real price, already "
-        "computed from the source data — a single value like '฿120/rai', "
-        "or a range like '฿95–120/rai' if multiple covering products "
-        "disagree on price. THE UNIT DIFFERS BY CATEGORY and is stated in "
-        "each section's header above (Weed = per rai; Insect/Disease = "
-        "per 20L spray tank; Fertilizer = per bag) — never compare "
-        "cost_summary numbers across categories, only within the same "
-        "one. Use cost_summary to spot real cost-effectiveness patterns: "
-        "an Excellent-efficacy product at a similar or lower price than "
-        "an Average/Weak one covering the same category is a genuinely "
-        "good pick worth naming; a much pricier product that isn't "
-        "meaningfully better in efficacy is worth flagging as poor "
-        "value. Don't force a price comment onto every window — only "
-        "raise it where the price actually tells you something useful.\n"
+        "Price/cost data is intentionally NOT included in these tables — "
+        "don't discuss pricing, cost-effectiveness, or value for money in "
+        "this analysis, since you have no way to know what a reasonable "
+        "price looks like in this market.\n"
         "each pest/"
         "weed/disease has both an English and a Thai name column — use "
         "whichever name fits naturally, they refer to the same thing.\n\n"
