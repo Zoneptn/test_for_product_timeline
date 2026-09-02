@@ -1257,7 +1257,7 @@ def get_ai_analysis(summary_text: str) -> str:
     try:
         msg = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=2200,
+            max_tokens=2500,
             messages=[{"role": "user", "content": english_prompt}],
             extra_headers=extra_headers,
         )
