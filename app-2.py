@@ -694,6 +694,19 @@ def normalize_efficiency(val):
     return title if title in EFFICIENCY_ORDER else None
 
 
+# Shown as a caption under the Weed/Insect/Disease charts so the rating
+# words have a concrete, consistent meaning rather than being left to
+# guesswork. Adjust the percentages here if your team's definition of
+# "control" changes — this is the only place they're defined.
+EFFICIENCY_LEGEND = (
+    "✅ **Excellent** >90% control | "
+    "🟢 **Effective** 80–89% control | "
+    "🟨 **Moderate** 60–79% control | "
+    "🟠 **Poor** 40–59% control | "
+    "🔴 **Ineffective** <40% control"
+)
+
+
 
 def _format_price(val) -> str:
     """฿1,234 style formatting for a single price cell. Returns '' for
@@ -1708,6 +1721,8 @@ def render_coverage_view():
             crop_id, sheets, crop_stage_df, label_col, company_choice
         )
         st.plotly_chart(fig, use_container_width=True)
+        if board_choice != "Fertilizer":
+            st.caption(EFFICIENCY_LEGEND)
 
         if detail_df.empty:
             st.info(f"No {board_choice.lower()} data for this crop.")
