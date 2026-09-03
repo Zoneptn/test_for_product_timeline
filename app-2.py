@@ -598,11 +598,11 @@ def render_threat_view():
 # JUNCTION sheets (slim — link a window to a product by ID; kept as
 # separate sheets per category so they stay easy to scan/edit):
 #   weed_her    : crop_id, ws_id, weed_id, weed_name_th, her_id, trade_name,
-#                 efficacy
+#                 efficiency
 #   pest_ins    : crop_id, pest_id, pest_name_th, ins_id, trade_name,
-#                 efficacy
+#                 efficiency
 #   disease_fun : crop_id, disease_id, disease_name_th, fun_id, trade_name,
-#                 efficacy
+#                 efficiency
 #   fertilizer  : crop_id, stage_id, fer_id, stage
 #
 # tier (on every master sheet) accepts a range of real-world spellings
@@ -648,38 +648,51 @@ def normalize_tier(val) -> str:
     return s if s in TIER_ORDER else "Generic"
 
 
-# Efficacy lives on the JUNCTION sheets (weed_her / pest_ins / disease_fun),
-# not the product master sheets — a product's real-world efficacy varies by
-# which pest/weed/disease it's up against, so it belongs at the
-# product-x-target pairing, the same place trade_name already sits.
-# Expected values: Excellent / Average / Weak. Unlike tier, a blank/
-# unrecognized value normalizes to "Unrated" (not "Weak") — this is new
+# Efficiency lives on the JUNCTION sheets (weed_her / pest_ins / disease_fun),
+# not the product master sheets — a product's real-world efficiency varies by
+# which pest/weed/disease it's up against (e.g. Chemical A might be
+# Excellent against Pest A but only Moderate against Pest B), so it
+# belongs at the product-x-target pairing, the same place trade_name
+# already sits. Expected values: Excellent / Effective / Moderate / Poor
+# / Ineffective (5-point scale). Unlike tier, a blank/unrecognized value
+# normalizes to "Unrated" (not "Poor" or "Ineffective") — this is new
 # data you're likely filling in gradually, and an unrated product
-# shouldn't be treated as if it's a known weak performer. Fertilizer has
-# no efficacy concept (it's a nutrition schedule, not a pest/weed/disease
+# shouldn't be treated as if it's a known poor performer. Fertilizer has
+# no efficiency concept (it's a nutrition schedule, not a pest/weed/disease
 # control decision), so it's intentionally not part of this.
-EFFICACY_ORDER = ["Excellent", "Average", "Weak"]
-EFFICACY_BADGE = {"Excellent": "✅ Excellent", "Average": "🟨 Average", "Weak": "⚠️ Weak", "Unrated": "❔ Unrated"}
-EFFICACY_ALIASES = {
-    "excellent": "Excellent", "strong": "Excellent", "high": "Excellent", "very good": "Excellent", "good": "Excellent",
-    "average": "Average", "moderate": "Average", "medium": "Average", "fair": "Average",
-    "weak": "Weak", "low": "Weak", "poor": "Weak",
+EFFICIENCY_ORDER = ["Excellent", "Effective", "Moderate", "Poor", "Ineffective"]
+EFFICIENCY_BADGE = {
+    "Excellent": "✅ Excellent",
+    "Effective": "🟢 Effective",
+    "Moderate": "🟨 Moderate",
+    "Poor": "🟠 Poor",
+    "Ineffective": "🔴 Ineffective",
+    "Unrated": "❔ Unrated",
+}
+EFFICIENCY_ALIASES = {
+    "excellent": "Excellent", "strong": "Excellent", "high": "Excellent", "very good": "Excellent",
+    "effective": "Effective", "good": "Effective",
+    "moderate": "Moderate", "average": "Moderate", "medium": "Moderate", "fair": "Moderate",
+    "poor": "Poor", "weak": "Poor", "low": "Poor",
+    "ineffective": "Ineffective", "none": "Ineffective", "no effect": "Ineffective", "very poor": "Ineffective",
 }
 
 
-def normalize_efficacy(val):
-    """Returns 'Excellent'/'Average'/'Weak', or None if blank/unrecognized
-    (caller decides how to label that — see 'Unrated' usage below)."""
+def normalize_efficiency(val):
+    """Returns 'Excellent'/'Effective'/'Moderate'/'Poor'/'Ineffective', or
+    None if blank/unrecognized (caller decides how to label that — see
+    'Unrated' usage below)."""
     if pd.isna(val):
         return None
     raw = str(val).strip()
     if not raw:
         return None
     key = raw.lower().replace("_", "-").replace("  ", " ")
-    if key in EFFICACY_ALIASES:
-        return EFFICACY_ALIASES[key]
+    if key in EFFICIENCY_ALIASES:
+        return EFFICIENCY_ALIASES[key]
     title = raw.title()
-    return title if title in EFFICACY_ORDER else None
+    return title if title in EFFICIENCY_ORDER else None
+
 
 
 def _format_price(val) -> str:
@@ -800,14 +813,14 @@ def _default_product_html(g: pd.DataFrame, code_col: str, code_label: str,
         form = r.get("formulation_type", "")
         code = r.get(code_col, "")
         tier = TIER_BADGE[normalize_tier(r.get("tier"))]
-        efficacy = EFFICACY_BADGE[normalize_efficacy(r.get("efficacy")) or "Unrated"]
+        efficiency = EFFICIENCY_BADGE[normalize_efficiency(r.get("efficiency")) or "Unrated"]
         cost_str = ""
         if cost_col:
             price_fmt = _format_price(r.get(cost_col))
             if price_fmt:
                 cost_str = f" | Cost: {price_fmt}/{cost_unit_label}"
         lines.append(f"• <b>{trade}</b> — {common} {conc} ({form}) [{code_label} {code}] "
-                     f"Tier: {tier} | Efficacy: {efficacy}{cost_str}")
+                     f"Tier: {tier} | Efficiency: {efficiency}{cost_str}")
     return "<br>".join(lines) if lines else "—"
 
 
@@ -845,7 +858,7 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
                       code_col: str, code_label: str,
                       product_html_fn=_default_product_html,
                       track_moa: bool = False,
-                      track_efficacy: bool = False,
+                      track_efficiency: bool = False,
                       track_cost: bool = False,
                       cost_col: str = None,
                       cost_unit_label: str = None,
@@ -857,11 +870,12 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
     rotation flag. Not meaningful for the fertilizer board (code_col there
     is "type", not a resistance class), so it defaults off.
 
-    track_efficacy=True additionally computes, per window, the set of
-    distinct efficacy ratings (Excellent/Average/Weak, from the junction
-    sheet's "efficacy" column) among the covering products — a window can
-    be 'Has Product' but still weak if every covering product is Weak. Not
-    meaningful for fertilizer (no efficacy concept there), so it defaults
+    track_efficiency=True additionally computes, per window, the set of
+    distinct efficiency ratings (Excellent/Effective/Moderate/Poor/
+    Ineffective, from the junction sheet's "efficiency" column) among the
+    covering products — a window can be 'Has Product' but still poorly
+    covered if every covering product rates Poor or Ineffective. Not
+    meaningful for fertilizer (no efficiency concept there), so it defaults
     off.
 
     track_cost=True additionally computes, per window, a 'cost_summary'
@@ -891,8 +905,8 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
         if track_moa:
             df["moa_mix"] = "—"
             df["moa_group_count"] = 0
-        if track_efficacy:
-            df["efficacy_mix"] = "—"
+        if track_efficiency:
+            df["efficiency_mix"] = "—"
         if track_cost:
             df["cost_summary"] = "—"
         return df
@@ -903,7 +917,7 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
     matched_map = {}
     tier_mix_map = {}
     moa_mix_map = {}
-    efficacy_mix_map = {}
+    efficiency_mix_map = {}
     cost_summary_map = {}
     product_names_map = {}
     active_ing_map = {}
@@ -916,12 +930,12 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
             if track_moa and code_col in g.columns:
                 codes_present = sorted({str(c) for c in g[code_col].dropna().astype(str) if str(c).strip()})
                 moa_mix_map[k] = codes_present
-            if track_efficacy:
-                raw_efficacies = [normalize_efficacy(v) for v in g.get("efficacy", pd.Series(dtype=object))]
-                efficacies_present = {e for e in raw_efficacies if e is not None}
-                efficacy_mix_map[k] = (
-                    ", ".join(e for e in EFFICACY_ORDER if e in efficacies_present)
-                    if efficacies_present else "Unrated"
+            if track_efficiency:
+                raw_efficiencies = [normalize_efficiency(v) for v in g.get("efficiency", pd.Series(dtype=object))]
+                efficiencies_present = {e for e in raw_efficiencies if e is not None}
+                efficiency_mix_map[k] = (
+                    ", ".join(e for e in EFFICIENCY_ORDER if e in efficiencies_present)
+                    if efficiencies_present else "Unrated"
                 )
             if track_cost and cost_col and cost_col in g.columns:
                 cost_summary_map[k] = _format_cost_range(g[cost_col].tolist(), cost_unit_label)
@@ -952,8 +966,8 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
     if track_moa:
         df["moa_mix"] = df["_key"].map(lambda k: ", ".join(moa_mix_map.get(k, [])) or "—")
         df["moa_group_count"] = df["_key"].map(lambda k: len(moa_mix_map.get(k, [])))
-    if track_efficacy:
-        df["efficacy_mix"] = df["_key"].map(lambda k: efficacy_mix_map.get(k, "—"))
+    if track_efficiency:
+        df["efficiency_mix"] = df["_key"].map(lambda k: efficiency_mix_map.get(k, "—"))
     if track_cost:
         df["cost_summary"] = df["_key"].map(lambda k: cost_summary_map.get(k, "—"))
     df = df.drop(columns=["_key"])
@@ -1115,7 +1129,7 @@ def weed_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
 
     key_cols = ["ws_id", "weed_id"]
     df = compute_coverage(window_df, product_df, key_cols, company, "hrac_code", "HRAC",
-                           track_moa=True, track_efficacy=True, track_cost=True,
+                           track_moa=True, track_efficiency=True, track_cost=True,
                            cost_col="price_per_rai", cost_unit_label="rai")
     df = df.rename(columns={"moa_mix": "hrac_mix", "moa_group_count": "hrac_group_count"})
 
@@ -1145,7 +1159,7 @@ def weed_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["weed_stage", "weed_science", "weed_name_en", "weed_name_th",
                    "type", "start_day", "end_day", "coverage_status", "tier_mix",
-                   "efficacy_mix", "cost_summary", "product_names", "active_ingredients",
+                   "efficiency_mix", "cost_summary", "product_names", "active_ingredients",
                    "hrac_mix", "hrac_group_count"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
 
@@ -1163,7 +1177,7 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
 
     key_cols = ["pest_id"]
     df = compute_coverage(window_df, product_df, key_cols, company, "irac_code", "IRAC",
-                           track_moa=True, track_efficacy=True, track_cost=True,
+                           track_moa=True, track_efficiency=True, track_cost=True,
                            cost_col="price_per_20l", cost_unit_label="20L tank")
     df = df.rename(columns={"moa_mix": "irac_mix", "moa_group_count": "irac_group_count"})
 
@@ -1195,7 +1209,7 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     sort_col="rank" if has_rank else "order",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["pest_name_en", "pest_name_th", "order", "start_day", "end_day",
-                   "coverage_status", "tier_mix", "efficacy_mix", "cost_summary",
+                   "coverage_status", "tier_mix", "efficiency_mix", "cost_summary",
                    "product_names", "active_ingredients", "irac_mix", "irac_group_count"]
     if has_rank:
         detail_cols.insert(3, "rank")
@@ -1209,7 +1223,7 @@ def disease_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
 
     key_cols = ["disease_id"]
     df = compute_coverage(window_df, product_df, key_cols, company, "frac_code", "FRAC",
-                           track_moa=True, track_efficacy=True, track_cost=True,
+                           track_moa=True, track_efficiency=True, track_cost=True,
                            cost_col="price_per_20l", cost_unit_label="20L tank")
     df = df.rename(columns={"moa_mix": "frac_mix", "moa_group_count": "frac_group_count"})
 
@@ -1239,7 +1253,7 @@ def disease_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["disease_name_sc", "disease_name_en", "disease_name_th",
                    "type", "start_day", "end_day", "coverage_status", "tier_mix",
-                   "efficacy_mix", "cost_summary", "product_names", "active_ingredients",
+                   "efficiency_mix", "cost_summary", "product_names", "active_ingredients",
                    "frac_mix", "frac_group_count"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
 
@@ -1372,7 +1386,7 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
         "--- Row-level detail (one row = one pressure window, not one weed) ---",
         _table_for_ai(weed_df, ["weed_science", "weed_name_en", "weed_name_th", "type",
                                  "start_day", "end_day", "coverage_status", "tier_mix",
-                                 "efficacy_mix", "product_names",
+                                 "efficiency_mix", "product_names",
                                  "active_ingredients", "hrac_mix", "hrac_group_count"]),
         "",
         "=== Insect (insecticide) coverage ===",
@@ -1383,7 +1397,7 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
         "--- Row-level detail (one row = one pressure window, not one pest) ---",
         _table_for_ai(pest_df, ["pest_name_en", "pest_name_th", "order", "rank",
                                  "start_day", "end_day", "coverage_status", "tier_mix",
-                                 "efficacy_mix", "product_names",
+                                 "efficiency_mix", "product_names",
                                  "active_ingredients", "irac_mix", "irac_group_count"]),
         "",
         "=== Disease (fungicide) coverage ===",
@@ -1395,13 +1409,13 @@ def build_full_coverage_summary(crop_id, sheets, crop_stage_df, label_col,
         "--- Row-level detail (one row = one pressure window, not one disease) ---",
         _table_for_ai(disease_df, ["disease_name_sc", "disease_name_en", "disease_name_th",
                                     "type", "start_day", "end_day", "coverage_status",
-                                    "tier_mix", "efficacy_mix", "product_names",
+                                    "tier_mix", "efficiency_mix", "product_names",
                                     "active_ingredients", "frac_mix", "frac_group_count"]),
         "",
         "=== Fertilizer coverage ===",
         "(Fertilizer rows are already one-per-application-stage — no "
-        "entity/window distinction applies here. No efficacy_mix — "
-        "efficacy isn't a meaningful concept for fertilizer.)",
+        "entity/window distinction applies here. No efficiency_mix — "
+        "efficiency isn't a meaningful concept for fertilizer.)",
         _table_for_ai(fert_df, ["stage", "start_day", "end_day", "coverage_status", "tier_mix",
                                  "product_names", "active_ingredients"]),
     ]
@@ -1418,16 +1432,16 @@ ANALYSIS_STYLE_CONFIG = {
             "Write a SHORT, skimmable summary — not a full report. For "
             "each of the four categories (Weed, Insect, Disease, "
             "Fertilizer), give ONE sentence on whether coverage is strong "
-            "or thin — judged from coverage_status AND efficacy_mix "
+            "or thin — judged from coverage_status AND efficiency_mix "
             "together, not coverage_status alone, so a category with high "
-            "'Has Product' counts but mostly Weak/Unrated efficacy reads "
-            "as thin, not strong — plus the single most important reason "
-            "why. Skip minor detail, skip restating every window, skip a "
-            "portfolio tier breakdown unless it's the single biggest "
-            "issue. End with ONE sentence naming the single "
-            "highest-priority gap to fix (a true no-product gap or a "
-            "covered-but-weak-efficacy soft gap — whichever leaves the "
-            "pest/weed/disease more exposed). Target roughly 250-350 "
+            "'Has Product' counts but mostly Poor/Ineffective/Unrated "
+            "efficiency reads as thin, not strong — plus the single most "
+            "important reason why. Skip minor detail, skip restating "
+            "every window, skip a portfolio tier breakdown unless it's "
+            "the single biggest issue. End with ONE sentence naming the "
+            "single highest-priority gap to fix (a true no-product gap "
+            "or a covered-but-low-efficiency soft gap — whichever leaves "
+            "the pest/weed/disease more exposed). Target roughly 250-350 "
             "words total, in plain natural prose (no headers, no bullet "
             "list)."
         ),
@@ -1443,23 +1457,24 @@ ANALYSIS_STYLE_CONFIG = {
             "- Where the portfolio is strong and where it's genuinely thin, "
             "category by category — include all four categories, even "
             "briefly. Base this judgment on coverage_status AND "
-            "efficacy_mix together, not coverage_status alone — a "
+            "efficiency_mix together, not coverage_status alone — a "
             "category with high 'Has Product' counts but mostly "
-            "Weak/Unrated efficacy is NOT strong, it's a false sense of "
-            "coverage, and should be described that way.\n"
+            "Poor/Ineffective/Unrated efficiency is NOT strong, it's a "
+            "false sense of coverage, and should be described that way.\n"
             "- Whether it leans Generic, Medium, or Premium overall, and which "
             "category pulls that either way.\n"
-            "- Windows that are technically covered but efficacy_mix shows "
-            "Weak or only Unrated — call these out explicitly as 'soft "
-            "gaps', distinct from true no-product gaps, since a green "
-            "light on the coverage board doesn't guarantee a strong "
-            "product is in play.\n"
+            "- Windows that are technically covered but efficiency_mix shows "
+            "Poor, Ineffective, or only Unrated — call these out "
+            "explicitly as 'soft gaps', distinct from true no-product "
+            "gaps, since a green light on the coverage board doesn't "
+            "guarantee a strong product is in play. A Moderate rating is "
+            "worth mentioning as middling but isn't itself a soft gap.\n"
             "- Any single-resistance-code windows worth flagging as a rotation "
             "risk.\n"
             "- Any product that's doing a lot of the work across many windows, "
             "if that pattern shows up.\n"
             "- End with 2-3 sentences on what to prioritize, weighing true "
-            "no-product gaps against covered-but-weak-efficacy soft gaps — "
+            "no-product gaps against covered-but-low-efficiency soft gaps — "
             "don't automatically rank a no-product gap above a soft gap; "
             "judge by which one leaves the pest/weed/disease more exposed.\n\n"
             "Write it the way you'd actually say it out loud — normal "
@@ -1517,14 +1532,17 @@ def get_ai_analysis(summary_text: str, style: str = "Detailed") -> str:
         "common/active-ingredient name(s) (formula for Fertilizer); "
         "hrac_mix/irac_mix/frac_mix list the distinct resistance codes "
         "covering that window (a single code = rotation risk); "
-        "efficacy_mix (Weed/Insect/Disease only, not Fertilizer) lists the "
-        "efficacy rating(s) — Excellent/Average/Weak, or 'Unrated' if not yet "
-        "documented — of the product(s) covering that window SPECIFICALLY "
-        "against that pest/weed/disease. A window being 'Has Product' does "
-        "NOT mean it's well-covered if efficacy_mix is Weak or only "
-        "Unrated — call that out as a soft spot, distinct from a true 'No "
-        "Product' gap. Don't treat 'Unrated' as if it means poor efficacy; "
-        "it only means the rating hasn't been documented yet.\n"
+        "efficiency_mix (Weed/Insect/Disease only, not Fertilizer) lists the "
+        "efficiency rating(s) — Excellent/Effective/Moderate/Poor/Ineffective, "
+        "or 'Unrated' if not yet documented — of the product(s) covering "
+        "that window SPECIFICALLY against that pest/weed/disease (the "
+        "same product can rate differently against different targets — "
+        "e.g. Excellent against one pest, Moderate against another). A "
+        "window being 'Has Product' does NOT mean it's well-covered if "
+        "efficiency_mix is Poor, Ineffective, or only Unrated — call that "
+        "out as a soft spot, distinct from a true 'No Product' gap. "
+        "Don't treat 'Unrated' as if it means Ineffective; it only means "
+        "the rating hasn't been documented yet.\n"
         "Price/cost data is intentionally NOT included in these tables — "
         "don't discuss pricing, cost-effectiveness, or value for money in "
         "this analysis, since you have no way to know what a reasonable "
@@ -1779,7 +1797,7 @@ def _price_comparison_table(sheets: dict, cfg: dict, crop_id, target_id,
     """Every company's product linked to this target, across ALL windows
     that target appears in (deduped down to one row per product — price/
     size/usage/tier are product-level attributes and don't vary by
-    window, only efficacy might, so efficacy is shown as a mix if it
+    window, only efficiency might, so efficiency is shown as a mix if it
     does). ascending=True sorts cheapest first, False sorts priciest
     first; rows with no price data always sort to the bottom either way
     so they never get mistaken for the cheapest (or most expensive)
@@ -1787,7 +1805,7 @@ def _price_comparison_table(sheets: dict, cfg: dict, crop_id, target_id,
     junction = sheets.get(cfg["junction"], pd.DataFrame())
     master = sheets.get(cfg["master"], pd.DataFrame())
     j_id, m_id = cfg["junction_id"], cfg["master_id"]
-    empty_cols = ["company", "trade_name", "common_name", "tier", "efficacy",
+    empty_cols = ["company", "trade_name", "common_name", "tier", "efficiency",
                   "price", "size", "usage", cfg["cost_col"]]
     if junction.empty or master.empty or j_id not in junction.columns or m_id not in master.columns:
         return pd.DataFrame(columns=empty_cols)
@@ -1806,18 +1824,18 @@ def _price_comparison_table(sheets: dict, cfg: dict, crop_id, target_id,
     rows = []
     for pid, g in merged.groupby(m_id, dropna=False):
         first = g.iloc[0]
-        raw_efficacies = [normalize_efficacy(v) for v in g.get("efficacy", pd.Series(dtype=object))]
-        efficacies_present = {e for e in raw_efficacies if e is not None}
-        efficacy_display = (
-            "/".join(e for e in EFFICACY_ORDER if e in efficacies_present)
-            if efficacies_present else "Unrated"
+        raw_efficiencies = [normalize_efficiency(v) for v in g.get("efficiency", pd.Series(dtype=object))]
+        efficiencies_present = {e for e in raw_efficiencies if e is not None}
+        efficiency_display = (
+            "/".join(e for e in EFFICIENCY_ORDER if e in efficiencies_present)
+            if efficiencies_present else "Unrated"
         )
         rows.append({
             "company": first.get("company", ""),
             "trade_name": first.get("trade_name", ""),
             "common_name": first.get("common_name", ""),
             "tier": normalize_tier(first.get("tier")),
-            "efficacy": efficacy_display,
+            "efficiency": efficiency_display,
             "price": first.get("price"),
             "size": first.get("size"),
             "usage": first.get("usage"),
@@ -1895,7 +1913,7 @@ def render_price_comparison_view():
     )
     display = display.rename(columns={
         "company": "Company", "trade_name": "Trade Name", "common_name": "Common Name",
-        "tier": "Tier", "efficacy": "Efficacy", "price": "Price", "size": "Size", "usage": "Usage",
+        "tier": "Tier", "efficiency": "Efficiency", "price": "Price", "size": "Size", "usage": "Usage",
         cfg["cost_col"]: cfg["cost_col"].replace("_", " ").title(),
     })
     st.subheader(f"{target_choice} — {len(display)} product(s) across {display['Company'].nunique()} company(ies)")
