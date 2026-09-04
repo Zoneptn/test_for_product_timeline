@@ -1803,6 +1803,10 @@ PRICE_CATEGORY_CONFIG = {
         "window_sheet": "crop_weeds", "target_id_col": "weed_id",
         "name_en_col": "weed_science", "name_th_col": "weed_name_th",
         "cost_col": "price_per_rai", "cost_unit_label": "rai",
+        # weed_stage groups weed windows by application timing (e.g.
+        # "Early Post", "Late Post") — only crop_weeds has this concept,
+        # so this key is intentionally absent from Insect/Disease below.
+        "stage_col": "weed_stage",
     },
     "Insecticide (Insect)": {
         "junction": "pest_ins", "master": "prod_ins",
@@ -1821,15 +1825,37 @@ PRICE_CATEGORY_CONFIG = {
 }
 
 
-def _price_target_options(sheets: dict, cfg: dict, crop_id) -> pd.DataFrame:
+def _price_stage_options(sheets: dict, cfg: dict, crop_id) -> list:
+    """Distinct spray-timing values (e.g. Early Post/Late Post) for this
+    crop, only meaningful when cfg has a 'stage_col' (currently just
+    Herbicide). Returns [] for categories without the concept, or if the
+    column isn't present in the sheet yet — the caller treats an empty
+    list as 'no timing filter to offer'."""
+    stage_col = cfg.get("stage_col")
+    if not stage_col:
+        return []
+    window_df = sheets.get(cfg["window_sheet"], pd.DataFrame())
+    if window_df.empty or stage_col not in window_df.columns:
+        return []
+    w = window_df[window_df["crop_id"] == crop_id]
+    return sorted({str(v).strip() for v in w[stage_col].dropna() if str(v).strip()})
+
+
+def _price_target_options(sheets: dict, cfg: dict, crop_id, stage_filter: str = None) -> pd.DataFrame:
     """Distinct (target_id, name_en, name_th) options for the target
     picker, scoped to this crop. A target can have several rows in the
     window sheet (one per pressure window) — dedupe down to one row per
-    target_id since only the name is needed here."""
+    target_id since only the name is needed here. stage_filter, when
+    given and cfg has a 'stage_col', narrows this to only targets that
+    have at least one window at that spray timing (e.g. only weeds with
+    an 'Early Post' window)."""
     window_df = sheets.get(cfg["window_sheet"], pd.DataFrame())
     if window_df.empty:
         return pd.DataFrame(columns=[cfg["target_id_col"], "name_en", "name_th"])
     w = window_df[window_df["crop_id"] == crop_id].copy()
+    stage_col = cfg.get("stage_col")
+    if stage_filter and stage_col and stage_col in w.columns:
+        w = w[w[stage_col].astype(str).str.strip() == stage_filter]
     if w.empty:
         return pd.DataFrame(columns=[cfg["target_id_col"], "name_en", "name_th"])
     w["name_en"] = w[cfg["name_en_col"]]
@@ -1931,9 +1957,23 @@ def render_price_comparison_view():
     cfg = PRICE_CATEGORY_CONFIG[category_choice]
     name_col = "name_en" if lang_choice == "English" else "name_th"
 
-    targets = _price_target_options(sheets, cfg, crop_id)
+    # Spray Timing (e.g. Early Post / Late Post) only exists for
+    # Herbicide, via crop_weeds' weed_stage column — other categories
+    # simply don't get this filter offered at all.
+    stage_options = _price_stage_options(sheets, cfg, crop_id)
+    stage_filter = None
+    if stage_options:
+        stage_choice = st.selectbox(
+            "Spray Timing", ["All"] + stage_options, key="price_stage"
+        )
+        stage_filter = None if stage_choice == "All" else stage_choice
+
+    targets = _price_target_options(sheets, cfg, crop_id, stage_filter=stage_filter)
     if targets.empty:
-        st.info(f"No {category_choice.lower()} targets found for this crop.")
+        if stage_filter:
+            st.info(f"No {category_choice.lower()} targets found for '{stage_filter}' timing on this crop.")
+        else:
+            st.info(f"No {category_choice.lower()} targets found for this crop.")
         st.stop()
 
     target_name_to_id = dict(zip(targets[name_col], targets[cfg["target_id_col"]]))
