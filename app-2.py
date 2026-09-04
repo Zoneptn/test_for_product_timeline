@@ -71,15 +71,24 @@ def maybe_show_rice_fertilizer_note(crop_choice: str, board_choice: str):
 #   crop_weeds    : crop_id, ws_id, weed_stage, weed_id, weed_name_en,
 #                   weed_name_th, weed_science, type, start_day, end_day
 #   weed_her      : crop_id, ws_id, weed_id, weed_name_en, weed_name_th,
-#                   common_name, hrac_code
+#                   common_name, hrac_code, efficiency (optional)
 #   crop_pest     : crop_id, pest_id, pest_name_en, pest_name_th, order,
 #                   rank, start_day, end_day
-#   pest_ins      : crop_id, pest_id, pest_name_th, common_name, irac_code
+#   pest_ins      : crop_id, pest_id, pest_name_th, common_name, irac_code,
+#                   efficiency (optional)
 #   crop_disease  : crop_id, disease_id, disease_name_en, disease_name_th,
 #                   disease_name_sc, type, start_day, end_day
 #   disease_fun   : crop_id, disease_id, disease_name_th, common_name,
-#                   frac_code
+#                   frac_code, efficiency (optional)
 #   fertilizer    : crop_id, crop, formula, start_day, end_day
+#
+# efficiency (Excellent/Effective/Moderate/Poor/Ineffective — same scale
+# as the Coverage workbook) rates the ACTIVE INGREDIENT (common_name)
+# itself against that specific pest/weed/disease — this sheet has no
+# company/brand dimension, just chemical-to-target links, unlike the
+# Coverage workbook's per-product junction sheets. Entirely optional:
+# omit the column, or leave individual cells blank, and it shows as
+# "Unrated" rather than breaking anything — fill it in gradually.
 # =====================================================================
 
 DEFAULT_PATH_THREAT = "crop_timeline.xlsx"
@@ -137,17 +146,38 @@ def get_file_threat():
 
 
 def aggregate_chemicals(merged: pd.DataFrame, group_cols: list,
-                         name_col: str, code_col: str, code_label: str):
+                         name_col: str, code_col: str, code_label: str,
+                         efficiency_col: str = None):
+    """efficiency_col, if provided and present, appends an efficiency
+    badge to each bullet — e.g. '• glyphosate (HRAC 9) — ✅ Excellent'.
+    Here efficiency rates the ACTIVE INGREDIENT (common_name) itself
+    against this specific pest/weed/disease, not a branded product —
+    this sheet has no company/brand dimension, just chemical-to-target
+    links. If the same (name, code) pair appears more than once within a
+    window with different efficiency values (a data-entry duplicate),
+    the first non-blank value wins rather than trying to merge them."""
     def _agg(g):
-        pairs = [
-            (str(n).strip(), str(c).strip())
-            for n, c in zip(g[name_col], g[code_col])
+        raw_rows = list(zip(
+            g[name_col], g[code_col],
+            g[efficiency_col] if efficiency_col and efficiency_col in g.columns
+            else [None] * len(g)
+        ))
+        triples = [
+            (str(n).strip(), str(c).strip(), eff)
+            for n, c, eff in raw_rows
             if pd.notna(n) or pd.notna(c)
         ]
-        pairs = [p for p in pairs if p[0] not in ("", "nan") or p[1] not in ("", "nan")]
-        count = len(pairs)
+        triples = [t for t in triples if t[0] not in ("", "nan") or t[1] not in ("", "nan")]
+        count = len(triples)
         if count:
-            chem_html = "<br>".join(f"• {n} ({c})" for n, c in pairs)
+            lines = []
+            for n, c, eff in triples:
+                if efficiency_col:
+                    badge = EFFICIENCY_BADGE[normalize_efficiency(eff) or "Unrated"]
+                    lines.append(f"• {n} ({c}) — {badge}")
+                else:
+                    lines.append(f"• {n} ({c})")
+            chem_html = "<br>".join(lines)
         else:
             chem_html = "—"
         return pd.Series({"chem_count": count, "chem_list_html": chem_html})
@@ -299,14 +329,14 @@ def weed_board_threat(crop_id, sheets, crop_stage_df, stage_label_col):
     her = sheets["weed_her"]
     raw = weeds[weeds["crop_id"] == crop_id].copy()
     her_c = her[her["crop_id"] == crop_id]
-    merged = raw.merge(
-        her_c[["ws_id", "weed_id", "common_name", "hrac_code"]],
-        on=["ws_id", "weed_id"], how="left",
-    )
+    has_efficiency = "efficiency" in her_c.columns
+    her_cols = ["ws_id", "weed_id", "common_name", "hrac_code"] + (["efficiency"] if has_efficiency else [])
+    merged = raw.merge(her_c[her_cols], on=["ws_id", "weed_id"], how="left")
 
     group_cols = ["crop_id", "ws_id", "weed_id", "weed_stage", "weed_science",
                   "weed_name_en", "weed_name_th", "type", "start_day", "end_day"]
-    agg = aggregate_chemicals(merged, group_cols, "common_name", "hrac_code", "HRAC")
+    agg = aggregate_chemicals(merged, group_cols, "common_name", "hrac_code", "HRAC",
+                               efficiency_col="efficiency" if has_efficiency else None)
     df = merged[group_cols].drop_duplicates().merge(agg, on=group_cols)
 
     name_col = "weed_name_th" if is_thai else "weed_science"
@@ -343,16 +373,16 @@ def insect_board_threat(crop_id, sheets, crop_stage_df, stage_label_col):
         # unpredictably.
         raw["rank"] = pd.to_numeric(raw["rank"], errors="coerce").fillna(float("inf"))
     ins_c = ins[ins["crop_id"] == crop_id]
-    merged = raw.merge(
-        ins_c[["pest_id", "common_name", "irac_code"]],
-        on="pest_id", how="left",
-    )
+    has_efficiency = "efficiency" in ins_c.columns
+    ins_cols = ["pest_id", "common_name", "irac_code"] + (["efficiency"] if has_efficiency else [])
+    merged = raw.merge(ins_c[ins_cols], on="pest_id", how="left")
 
     group_cols = ["crop_id", "pest_id", "pest_name_en", "pest_name_th",
                   "order", "start_day", "end_day"]
     if has_rank:
         group_cols.append("rank")
-    agg = aggregate_chemicals(merged, group_cols, "common_name", "irac_code", "IRAC")
+    agg = aggregate_chemicals(merged, group_cols, "common_name", "irac_code", "IRAC",
+                               efficiency_col="efficiency" if has_efficiency else None)
     df = merged[group_cols].drop_duplicates().merge(agg, on=group_cols)
 
     name_col = "pest_name_th" if is_thai else "pest_name_en"
@@ -389,14 +419,14 @@ def disease_board_threat(crop_id, sheets, crop_stage_df, stage_label_col):
     fun = sheets["disease_fun"]
     raw = dis[dis["crop_id"] == crop_id].copy()
     fun_c = fun[fun["crop_id"] == crop_id]
-    merged = raw.merge(
-        fun_c[["disease_id", "common_name", "frac_code"]],
-        on="disease_id", how="left",
-    )
+    has_efficiency = "efficiency" in fun_c.columns
+    fun_cols = ["disease_id", "common_name", "frac_code"] + (["efficiency"] if has_efficiency else [])
+    merged = raw.merge(fun_c[fun_cols], on="disease_id", how="left")
 
     group_cols = ["crop_id", "disease_id", "disease_name_en", "disease_name_th",
                   "disease_name_sc", "type", "start_day", "end_day"]
-    agg = aggregate_chemicals(merged, group_cols, "common_name", "frac_code", "FRAC")
+    agg = aggregate_chemicals(merged, group_cols, "common_name", "frac_code", "FRAC",
+                               efficiency_col="efficiency" if has_efficiency else None)
     df = merged[group_cols].drop_duplicates().merge(agg, on=group_cols)
 
     name_col = "disease_name_th" if is_thai else "disease_name_en"
@@ -549,6 +579,8 @@ def render_threat_view():
     maybe_show_rice_fertilizer_note(crop_choice, board_choice)
     fig, board_df, detail_cols = BOARDS_THREAT[board_choice](crop_id, sheets, crop_stage_df, label_col)
     st.plotly_chart(fig, use_container_width=True)
+    if board_choice != "Fertilizer":
+        st.caption(EFFICIENCY_LEGEND)
 
     if board_df.empty:
         st.info(f"No {board_choice.lower()} data for this crop.")
